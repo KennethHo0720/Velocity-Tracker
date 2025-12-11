@@ -54,14 +54,14 @@ if uploaded_file is not None:
         cap.set(cv2.CAP_PROP_POS_MSEC, start_t * 1000)
         ret_s, frame_s = cap.read()
         if ret_s:
-            st.image(frame_s, channels="BGR", caption=f"Start: {start_t}s", use_container_width=True)
+            st.image(frame_s, channels="BGR", caption=f"Start: {start_t}s", use_column_width=True)
             
     with col_t2:
         end_t = st.slider("結束時間 (s)", 0.0, duration, duration, step=0.1)
         cap.set(cv2.CAP_PROP_POS_MSEC, end_t * 1000)
         ret_e, frame_e = cap.read()
         if ret_e:
-            st.image(frame_e, channels="BGR", caption=f"End: {end_t}s", use_container_width=True)
+            st.image(frame_e, channels="BGR", caption=f"End: {end_t}s", use_column_width=True)
 
     if start_t >= end_t:
         st.error("結束時間必須大於開始時間")
