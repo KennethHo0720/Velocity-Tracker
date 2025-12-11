@@ -265,6 +265,11 @@ if uploaded_file is not None:
             if is_mobile:
                  st.write("▼ 請在下方繪圖")
             
+            # --- DEBUG: Show image outside canvas to verify it exists ---
+            st.write("Debug Preview (Raw Image):")
+            st.image(frame_pil, caption="Debug Preview", use_column_width=False, width=display_w)
+            # ------------------------------------------------------------
+
             canvas_result = st_canvas(
                 fill_color="rgba(255, 165, 0, 0.1)",
                 stroke_width=3,
