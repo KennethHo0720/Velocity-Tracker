@@ -184,10 +184,10 @@ if uploaded_file is not None:
                 
                 # C. 尋找 Reps (Peak Detection) - 移植自 Desktop 版
                 candidate_peaks = []
-                # 閾值：速度必須大於 0.25 m/s 且是局部最大值
+                # 閾值：速度必須大於 0.3 m/s 且是局部最大值
                 for i in range(1, len(velocity_smooth)-1):
                     if velocity_smooth[i] > velocity_smooth[i-1] and velocity_smooth[i] > velocity_smooth[i+1]:
-                        if velocity_smooth[i] > 0.25:
+                        if velocity_smooth[i] > 0.3:
                             candidate_peaks.append({'v': velocity_smooth[i], 't': time_array[i], 'idx': i})
                 
                 # D. 合併接近的 Peaks (Merge Reps)
@@ -217,18 +217,21 @@ if uploaded_file is not None:
                 biggest_drop_pct = 0
                 drop_reps_indices = (-1, -1) # (index of rep A, index of rep B)
                 
+                # Logic synchronized with Desktop App: Find Biggest Absolute Drop first
                 if num_reps > 1:
                     max_drop_val = 0
+                    v_start_for_pct = 0
+                    
                     for i in range(num_reps - 1):
                         drop = peak_vs[i] - peak_vs[i+1]
                         if drop > max_drop_val:
                             max_drop_val = drop
-                            # 計算百分比 (相對於前一下)
-                            if peak_vs[i] > 0:
-                                curr_pct = (drop / peak_vs[i]) * 100
-                                if curr_pct > biggest_drop_pct:
-                                    biggest_drop_pct = curr_pct
-                                    drop_reps_indices = (i, i+1) # 0-based index
+                            v_start_for_pct = peak_vs[i]
+                            drop_reps_indices = (i, i+1) # 0-based index
+                            
+                    # Calculate Percentage for the biggest absolute drop
+                    if max_drop_val > 0 and v_start_for_pct > 0:
+                        biggest_drop_pct = (max_drop_val / v_start_for_pct) * 100
                 
                 # --- 6. 結果展示 ---
                 st.success(f"分析完成！偵測到 {num_reps} 組動作 (Reps)")
