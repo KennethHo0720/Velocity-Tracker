@@ -54,14 +54,14 @@ if uploaded_file is not None:
         cap.set(cv2.CAP_PROP_POS_MSEC, start_t * 1000)
         ret_s, frame_s = cap.read()
         if ret_s:
-            st.image(frame_s, channels="BGR", caption=f"Start: {start_t}s", use_column_width=True)
+            st.image(frame_s, channels="BGR", caption=f"Start: {start_t}s", width=300)
             
     with col_t2:
         end_t = st.slider("結束時間 (s)", 0.0, duration, duration, step=0.1)
         cap.set(cv2.CAP_PROP_POS_MSEC, end_t * 1000)
         ret_e, frame_e = cap.read()
         if ret_e:
-            st.image(frame_e, channels="BGR", caption=f"End: {end_t}s", use_column_width=True)
+            st.image(frame_e, channels="BGR", caption=f"End: {end_t}s", width=300)
 
     if start_t >= end_t:
         st.error("結束時間必須大於開始時間")
@@ -88,8 +88,10 @@ if uploaded_file is not None:
             
             from streamlit_drawable_canvas import st_canvas
             from PIL import Image
+            import base64
+            import io
 
-            # 縮放圖片以適應畫布
+            # 縮放圖片以適應畫布 (避免過大造成 WebSocket 斷線)
             max_canvas_width = 700
             canvas_scale = 1.0
             if w_orig > max_canvas_width:
@@ -99,8 +101,14 @@ if uploaded_file is not None:
             display_h = int(h_orig * canvas_scale)
             
             frame_rgb = cv2.cvtColor(first_frame, cv2.COLOR_BGR2RGB)
-            # Revert to RGB for simplicity and add debug info
             frame_pil = Image.fromarray(frame_rgb).resize((display_w, display_h))
+            
+            # --- FIX: Convert Image to Base64 String ---
+            # 直接轉成 Base64 字串餵給 Canvas，避開物件傳遞問題
+            buffered = io.BytesIO()
+            frame_pil.save(buffered, format="PNG")
+            img_str = base64.b64encode(buffered.getvalue()).decode()
+            bg_image_url = "data:image/png;base64," + img_str
             
             # Debug info to verify image size
             st.caption(f"Debug: Canvas Size {display_w}x{display_h}")
@@ -120,11 +128,12 @@ if uploaded_file is not None:
         with col_c2:
             # Create a canvas component
             # Dynamic key ensures re-render when start time changes
+            # Pass bg_image_url instead of PIL object
             canvas_result = st_canvas(
                 fill_color="rgba(255, 165, 0, 0.1)",
                 stroke_width=3,
                 stroke_color="#FF0000",
-                background_image=frame_pil,
+                background_image=bg_image_url,
                 update_streamlit=True,
                 height=display_h,
                 width=display_w,
