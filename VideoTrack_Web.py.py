@@ -302,7 +302,7 @@ if uploaded_file is not None:
             # --- 分析迴圈 ---
             # --- 分析迴圈 (Optimized with Threading) ---
             # Start the threaded video reader
-            video_reader = ThreadedVideoReader(video_path, start_frame, end_frame, process_scale)
+            video_reader = ThreadedVideoReader(video_path, start_frame, end_frame_idx, process_scale)
             video_reader.start()
             
             while video_reader.more():
