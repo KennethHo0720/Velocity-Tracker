@@ -45,71 +45,137 @@ if uploaded_file is not None:
     
     # --- 2. 剪輯 (Trim) ---
     st.header("2. 設定分析範圍")
-    st.info("💡 手機端請輸入數字來精確調整時間")
+    st.info("💡 拖曳滑桿來選擇起始與結束點 (即時預覽)")
     
+    # Trim Sliders with Preview
     col_t1, col_t2 = st.columns(2)
     with col_t1:
-        start_t = st.number_input("開始時間 (s)", 0.0, duration, 0.0, step=0.5)
+        start_t = st.slider("開始時間 (s)", 0.0, duration, 0.0, step=0.1)
+        cap.set(cv2.CAP_PROP_POS_MSEC, start_t * 1000)
+        ret_s, frame_s = cap.read()
+        if ret_s:
+            st.image(frame_s, channels="BGR", caption=f"Start: {start_t}s", use_container_width=True)
+            
     with col_t2:
-        end_t = st.number_input("結束時間 (s)", 0.0, duration, duration, step=0.5)
-    
+        end_t = st.slider("結束時間 (s)", 0.0, duration, duration, step=0.1)
+        cap.set(cv2.CAP_PROP_POS_MSEC, end_t * 1000)
+        ret_e, frame_e = cap.read()
+        if ret_e:
+            st.image(frame_e, channels="BGR", caption=f"End: {end_t}s", use_container_width=True)
+
     if start_t >= end_t:
         st.error("結束時間必須大於開始時間")
         st.stop()
 
-    # 讀取預覽幀
-    start_frame = int(start_t * fps)
-    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    # 讀取分析起始幀 (用於畫框)
+    cap.set(cv2.CAP_PROP_POS_MSEC, start_t * 1000)
     ret, first_frame = cap.read()
     
     if ret:
         h_orig, w_orig = first_frame.shape[:2]
         
-        # --- 3. 校准與追蹤設定 (Sliders) ---
+        # --- 3. 校准與追蹤設定 (Canvas) ---
         st.header("3. 校準與目標設定")
-        st.warning("⚠️ 請務必確認紅框包住槓片、綠框包住槓鈴末端")
+        st.info("👇 請在下方圖片上直接拖曳畫框 (先畫紅色校準物，再畫綠色目標)")
 
-        # 使用 Expander 節省空間
-        with st.expander("🛠️ 點擊展開調整位置 (校準/追蹤)", expanded=True):
-            st.subheader("🔴 校準物 (Plate 45lb/20kg)")
-            col_p1, col_p2 = st.columns(2)
-            with col_p1:
-                plate_x = st.slider("Plate X", 0, w_orig, int(w_orig*0.2), key="px")
-                plate_y = st.slider("Plate Y", 0, h_orig, int(h_orig*0.5), key="py")
-            with col_p2:
-                # 預設給大一點的範圍，方便手機調整
-                plate_s = st.slider("Plate Size", 10, 400, int(w_orig*0.15), key="ps")
-            
-            st.markdown("---")
-            st.subheader("🟢 追蹤目標 (Bar End)")
-            col_b1, col_b2 = st.columns(2)
-            with col_b1:
-                bar_x = st.slider("Bar X", 0, w_orig, int(w_orig*0.5), key="bx")
-                bar_y = st.slider("Bar Y", 0, h_orig, int(h_orig*0.5), key="by")
-            with col_b2:
-                bar_w = st.slider("Bar Width", 10, 200, 60, key="bw")
-                bar_h = st.slider("Bar Height", 10, 200, 60, key="bh")
+        from streamlit_drawable_canvas import st_canvas
+        from PIL import Image
 
-        # --- 繪製預覽圖 ---
-        # 為了手機顯示，這裡我們縮小顯示用的圖片，但不影響原始座標
-        display_frame = first_frame.copy()
-        cv2.rectangle(display_frame, (plate_x, plate_y), (plate_x + plate_s, plate_y + plate_s), (0, 0, 255), 4)
-        cv2.putText(display_frame, "Plate", (plate_x, plate_y-10), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0,0,255), 3)
+        # 縮放圖片以適應畫布 (避免過大)
+        max_canvas_width = 800
+        canvas_scale = 1.0
+        if w_orig > max_canvas_width:
+             canvas_scale = max_canvas_width / w_orig
         
-        cv2.rectangle(display_frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (0, 255, 0), 4)
-        cv2.putText(display_frame, "Target", (bar_x, bar_y-10), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0,255,0), 3)
+        display_w = int(w_orig * canvas_scale)
+        display_h = int(h_orig * canvas_scale)
         
-        st.image(display_frame, channels="BGR", caption="設定預覽 (請確保框選準確)", use_container_width=True)
+        frame_rgb = cv2.cvtColor(first_frame, cv2.COLOR_BGR2RGB)
+        frame_pil = Image.fromarray(frame_rgb).resize((display_w, display_h))
         
+        # 畫布設定
+        drawing_mode = st.selectbox(
+            "選擇繪製工具:",
+            ("rect", "transform"),
+            format_func=lambda x: "📦 畫框 (Rect)" if x == "rect" else "✋ 調整 (Transform)"
+        )
+        
+        stroke_color = st.color_picker("邊框顏色 (第一框=固定紅, 第二框=固定綠)", "#FF0000") # Dummy picker for user feedback, logic below overrides
+        
+        st.write("請依序繪製：")
+        st.markdown("1. **紅色框**: 校準槓片 (Calibration Frame)")
+        st.markdown("2. **綠色框**: 追蹤目標 (Tracking Target)")
+
+        # Create a canvas component
+        canvas_result = st_canvas(
+            fill_color="rgba(255, 165, 0, 0.1)",  # Fixed fill color with some opacity
+            stroke_width=3,
+            stroke_color="#FF0000", # Default red, but we handle logic by order
+            background_image=frame_pil,
+            update_streamlit=True,
+            height=display_h,
+            width=display_w,
+            drawing_mode=drawing_mode,
+            key="canvas",
+        )
+
+        plate_rect = None
+        target_rect = None
+        
+        if canvas_result.json_data is not None:
+            objects = canvas_result.json_data["objects"]
+            if len(objects) > 0:
+                # 假設用戶依序畫框：第一個是 Plate，第二個是 Target
+                # 為了更好的體驗，我們可以根據顏色或標籤，但簡單起見先用順序
+                # 並且在 UI 上提示
+                
+                # 第一個框：校準物
+                obj1 = objects[0]
+                plate_rect = (
+                    int(obj1["left"] / canvas_scale), 
+                    int(obj1["top"] / canvas_scale), 
+                    int(obj1["width"] / canvas_scale), 
+                    int(obj1["height"] / canvas_scale)
+                )
+                st.sidebar.success(f"✅ 校準物已設定: {plate_rect}")
+
+                if len(objects) > 1:
+                    # 第二個框：追蹤目標
+                    obj2 = objects[1]
+                    target_rect = (
+                        int(obj2["left"] / canvas_scale), 
+                        int(obj2["top"] / canvas_scale), 
+                        int(obj2["width"] / canvas_scale), 
+                        int(obj2["height"] / canvas_scale)
+                    )
+                    st.sidebar.success(f"✅ 追蹤目標已設定: {target_rect}")
+                else:
+                    st.sidebar.warning("⚠️ 請再畫一個框選取追蹤目標 (Bar End)")
+            else:
+                st.sidebar.info("請在圖片上畫出第一個框 (校準物)")
+
         # --- 4. 執行分析 ---
         st.markdown("###")
-        if st.button("🚀 開始智能分析 (Start Analysis)", type="primary"):
+        btn_disabled = (plate_rect is None or target_rect is None)
+        
+        if st.button("🚀 開始智能分析 (Start Analysis)", type="primary", disabled=btn_disabled):
+            if btn_disabled:
+                st.error("請先完成校準物與目標的框選！")
+                st.stop()
             
             # --- 初始化數據 ---
             st.write("正在處理影像... (這可能需要幾秒鐘)")
             progress_bar = st.progress(0)
             status_text = st.empty()
             
+            # 使用我們從 Canvas 拿到的座標，而不是 Sliders
+            (plate_x, plate_y, plate_w, plate_h) = plate_rect
+            # Plate Size 用寬度或高度的平均，或原本邏輯
+            # 在原 logic 中 plate_s 只有一個維度，這裡我們取最大邊作為直徑估計
+            plate_s = max(plate_w, plate_h) 
+            
+            (bar_x, bar_y, bar_w, bar_h) = target_rect
+
             # 1. 設置 Tracker
             # 2. 優化: 計算縮放比例 (Process Scale) 以加速處理
             target_width = 640  # 限制處理寬度為 640px，大幅提升網頁端速度
@@ -128,8 +194,6 @@ if uploaded_file is not None:
             
             # 計算真實世界比例尺 (Meters per Pixel)
             # 假設標準片直徑 0.45 米 (45cm)
-            # 注意：這裡要用縮放後的像素大小來計算，或者用原始像素
-            # 為了簡單，我們用原始像素計算比例，最後將追蹤到的像素還原回原始尺寸
             meters_per_pixel = 0.45 / float(plate_s) 
             
             positions = []
