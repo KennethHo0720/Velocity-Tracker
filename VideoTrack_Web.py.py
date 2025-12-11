@@ -214,19 +214,24 @@ if uploaded_file is not None:
         # is_mobile definition moved to top
         
         if is_mobile:
-            max_canvas_width = 350 # Typical mobile width
+            max_canvas_width = 300 # Reduced to 300 to fit smaller screens (iPhone SE is 320px)
             max_canvas_height = 500
         else:
             max_canvas_width = 800
             max_canvas_height = 600
 
-        # Instructions in expander to save space
-        with st.expander("TODO: 繪圖操作說明 (點擊展開)", expanded=not is_mobile):
+        # Instructions in expander
+        with st.expander("👉 繪圖操作說明 (按此展開)", expanded=not is_mobile):
              st.info("👇 操作說明")
-             st.markdown("請在下方圖片上依序畫框：")
+             st.markdown("請在下方圖片上依序畫框 (紅 -> 綠)：")
              st.markdown("1. **紅色框**: 校準槓片")
              st.markdown("2. **綠色框**: 追蹤目標")
-             st.caption("提示: 手機上請使用雙指縮放或拖曳來調整位置")
+             if is_mobile:
+                 st.markdown("---")
+                 st.warning("📱 **手機操作提示**:")
+                 st.markdown("- **單指 (One Finger)**: 畫框 (請用力按壓並拖曳)")
+                 st.markdown("- **雙指 (Two Fingers)**: 捲動頁面")
+                 st.markdown("- 若無法畫圖，請確保網頁沒有放大縮小")
 
         from streamlit_drawable_canvas import st_canvas
         from PIL import Image
@@ -294,7 +299,8 @@ if uploaded_file is not None:
                 height=display_h,
                 width=display_w,
                 drawing_mode=drawing_mode,
-                key=f"canvas_{start_t}_mob_{is_mobile}_v5_fixed", 
+                key=f"canvas_{start_t}_mob_{is_mobile}_v5_fixed",
+                display_toolbar=False,
             )
 
         plate_rect = None
