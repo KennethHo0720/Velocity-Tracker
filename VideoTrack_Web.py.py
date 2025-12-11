@@ -66,6 +66,12 @@ if uploaded_file is not None:
     if start_t >= end_t:
         st.error("結束時間必須大於開始時間")
         st.stop()
+        
+    # --- Advanced Settings (Analysis Thresholds) ---
+    with st.expander("⚙️ 進階設定 (Analysis Settings)"):
+        st.caption("若無法偵測到較慢的次數 (Grinders)，請嘗試降低速度門檻")
+        min_velo_threshold = st.slider("最小速度門檻 (Min Velocity, m/s)", 0.05, 1.0, 0.20, step=0.05)
+        smooth_window = st.slider("平滑係數 (Smoothing Window)", 3, 21, 9, step=2)
 
     # 讀取分析起始幀 (用於畫框)
     cap.set(cv2.CAP_PROP_POS_MSEC, start_t * 1000)
@@ -268,14 +274,14 @@ if uploaded_file is not None:
                 
                 # B. 計算速度 (Gradient)
                 velocity = np.gradient(height_smooth, time_array)
-                velocity_smooth = smooth_data(velocity, 9) # 平滑速度
+                velocity_smooth = smooth_data(velocity, smooth_window) # 使用自定義平滑係數
                 
                 # C. 尋找 Reps (Peak Detection) - 移植自 Desktop 版
                 candidate_peaks = []
-                # 閾值：速度必須大於 0.3 m/s 且是局部最大值
+                # 閾值：速度必須大於 min_velo_threshold 且是局部最大值
                 for i in range(1, len(velocity_smooth)-1):
                     if velocity_smooth[i] > velocity_smooth[i-1] and velocity_smooth[i] > velocity_smooth[i+1]:
-                        if velocity_smooth[i] > 0.3:
+                        if velocity_smooth[i] > min_velo_threshold:
                             candidate_peaks.append({'v': velocity_smooth[i], 't': time_array[i], 'idx': i})
                 
                 # D. 合併接近的 Peaks (Merge Reps)
