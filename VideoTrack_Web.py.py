@@ -222,6 +222,7 @@ if uploaded_file is not None:
             positions = []
             times = []
             
+            start_frame = int(start_t * fps)
             curr_frame_idx = start_frame
             end_frame_idx = int(end_t * fps)
             total_frames = end_frame_idx - start_frame
