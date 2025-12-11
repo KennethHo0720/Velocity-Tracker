@@ -32,7 +32,6 @@ def smooth_data(data, window_size):
     return np.convolve(data, window, mode='same')
 
 class ThreadedVideoReader:
-class ThreadedVideoReader:
     def __init__(self, path, start_frame, end_frame, scale_factor, rotation_code=None):
         self.path = path
         self.start_frame = start_frame
@@ -111,6 +110,9 @@ if uploaded_file is not None:
     
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
+    if np.isnan(fps) or fps < 1: fps = 30
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    duration = frame_count / fps
     # --- Global Settings (Sidebar) ---
     st.sidebar.header("設定 (Settings)")
     
