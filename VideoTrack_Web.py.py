@@ -99,8 +99,11 @@ if uploaded_file is not None:
             display_h = int(h_orig * canvas_scale)
             
             frame_rgb = cv2.cvtColor(first_frame, cv2.COLOR_BGR2RGB)
-            # Force RGBA to prevent black screen issues
-            frame_pil = Image.fromarray(frame_rgb).resize((display_w, display_h)).convert("RGBA")
+            # Revert to RGB for simplicity and add debug info
+            frame_pil = Image.fromarray(frame_rgb).resize((display_w, display_h))
+            
+            # Debug info to verify image size
+            st.caption(f"Debug: Canvas Size {display_w}x{display_h}")
             
             # 畫布設定
             drawing_mode = st.selectbox(
