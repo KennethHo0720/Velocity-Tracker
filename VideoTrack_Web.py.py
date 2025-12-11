@@ -256,6 +256,9 @@ if uploaded_file is not None:
         
         if "calibration_data" not in st.session_state:
             st.session_state.calibration_data = None
+            
+        if "stroke_color" not in st.session_state:
+            st.session_state.stroke_color = "#FF0000"
 
         @st.experimental_dialog("📏 畫布校準 (Drawing Canvas)")
         def calibration_dialog(frame_pil_img, d_width, d_height, scale_factor, stroke_clr):
