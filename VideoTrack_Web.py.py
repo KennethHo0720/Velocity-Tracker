@@ -16,6 +16,10 @@ st.markdown("""
     <style>
     .stButton>button { width: 100%; border-radius: 8px; font-weight: bold; }
     .stMetric { background-color: #f0f2f6; padding: 10px; border-radius: 8px; }
+    /* Mobile Touch Fix: Prevent scrolling when touching canvas */
+    iframe[title="streamlit_drawable_canvas.st_canvas"] {
+        touch-action: none; 
+    }
     </style>
     """, unsafe_allow_html=True)
 
