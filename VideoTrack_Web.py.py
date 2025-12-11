@@ -6,8 +6,10 @@ import tempfile
 import pandas as pd
 import threading
 import queue
+import queue
 import time
-
+import base64
+import io
 
 # --- 頁面配置 ---
 st.set_page_config(page_title="Barbell Tracker Pro V2", layout="wide") 
@@ -279,16 +281,23 @@ if uploaded_file is not None:
             if is_mobile:
                  st.write("▼ 請在下方繪圖")
             
+            # Manual Base64 Conversion to bypass library bug with Streamlit 1.xx
+            # This fixes "AttributeError: ... image_to_url" and Black Screen issues
+            buffered = io.BytesIO()
+            frame_pil.save(buffered, format="PNG")
+            img_str = base64.b64encode(buffered.getvalue()).decode()
+            img_data_url = "data:image/png;base64," + img_str
+
             canvas_result = st_canvas(
                 fill_color="rgba(255, 165, 0, 0.1)",
                 stroke_width=3,
                 stroke_color=stroke_color,
-                background_image=frame_pil,
+                background_image=img_data_url, # Pass Data URL instead of PIL object
                 update_streamlit=True,
                 height=display_h,
                 width=display_w,
                 drawing_mode=drawing_mode,
-                key=f"canvas_{start_t}_mob_{is_mobile}",  # Unique key for mode switch
+                key=f"canvas_{start_t}_mob_{is_mobile}_v2", 
             )
 
         plate_rect = None
