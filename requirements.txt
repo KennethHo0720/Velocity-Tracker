@@ -3,4 +3,4 @@ opencv-contrib-python-headless
 numpy
 matplotlib
 pandas
-streamlit-drawable-canvas
+streamlit-drawable-canvas==0.8.0
