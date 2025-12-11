@@ -4,6 +4,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import tempfile
 import pandas as pd
+import threading
+import queue
+import time
+
 
 # --- 頁面配置 ---
 st.set_page_config(page_title="Barbell Tracker Pro V2", layout="wide") 
@@ -26,6 +30,68 @@ def smooth_data(data, window_size):
     window = np.hanning(window_size)
     window = window / window.sum()
     return np.convolve(data, window, mode='same')
+
+class ThreadedVideoReader:
+    def __init__(self, path, start_frame, end_frame, scale_factor):
+        self.path = path
+        self.start_frame = start_frame
+        self.end_frame = end_frame
+        self.scale_factor = scale_factor
+        self.queue = queue.Queue(maxsize=128) # Buffer size
+        self.stopped = False
+        self.thread = threading.Thread(target=self.update, args=())
+        self.thread.daemon = True
+    
+    def start(self):
+        self.thread.start()
+        return self
+
+    def update(self):
+        cap = cv2.VideoCapture(self.path)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, self.start_frame)
+        current_idx = self.start_frame
+
+        while current_idx < self.end_frame:
+            if self.stopped:
+                break
+            
+            if not self.queue.full():
+                ret, frame = cap.read()
+                if not ret:
+                    self.stop()
+                    break
+                
+                # Pre-process in thread
+                frame_small = cv2.resize(frame, (0,0), fx=self.scale_factor, fy=self.scale_factor)
+                
+                self.queue.put((ret, frame_small, current_idx))
+                current_idx += 1
+            else:
+                time.sleep(0.01) # Wait a bit if queue is full
+
+        cap.release()
+        self.stopped = True
+
+    def read(self):
+        # Return next frame in the queue. 
+        # returns (ret, frame, idx) or None if empty/finished
+        try:
+            return self.queue.get(timeout=1)
+        except queue.Empty:
+            return None
+
+    def more(self):
+        return not self.stopped or not self.queue.empty()
+
+    def stop(self):
+        self.stopped = True
+        # Drain queue to allow thread to exit if blocked
+        while not self.queue.empty():
+            try:
+                self.queue.get_nowait()
+            except queue.Empty:
+                break
+
 
 # --- 1. 上傳與初始化 ---
 st.header("1. 上傳影片")
@@ -234,14 +300,23 @@ if uploaded_file is not None:
             total_frames = end_frame_idx - start_frame
             
             # --- 分析迴圈 ---
-            while curr_frame_idx < end_frame_idx:
-                ret, frame = cap.read()
-                if not ret: break
+            # --- 分析迴圈 (Optimized with Threading) ---
+            # Start the threaded video reader
+            video_reader = ThreadedVideoReader(video_path, start_frame, end_frame, process_scale)
+            video_reader.start()
+            
+            while video_reader.more():
+                item = video_reader.read()
+                if item is None:
+                    break
+                    
+                (ret, frame_small, idx) = item
+                if not ret:
+                    break
                 
-                # 縮小畫面進行追蹤 (加速關鍵)
-                frame_small = cv2.resize(frame, (0,0), fx=process_scale, fy=process_scale)
-                
+                # Tracking (CPU Bound) happens here parallel to next frame reading (I/O Bound)
                 success, box = tracker.update(frame_small)
+                
                 if success:
                     (x, y, bw, bh) = [int(v) for v in box]
                     cy_small = y + bh/2
@@ -249,17 +324,15 @@ if uploaded_file is not None:
                     cy_original = cy_small / process_scale
                     
                     positions.append(cy_original)
-                    times.append(curr_frame_idx / fps)
-                
-                curr_frame_idx += 1
+                    times.append(idx / fps)
                 
                 # 更新進度條 (每 10 幀更新一次以節省資源)
-                if total_frames > 0 and curr_frame_idx % 10 == 0:
-                    prog = (curr_frame_idx - start_frame) / total_frames
+                if total_frames > 0 and idx % 10 == 0:
+                    prog = (idx - start_frame) / total_frames
                     progress_bar.progress(min(prog, 1.0))
             
             progress_bar.progress(1.0)
-            cap.release()
+            video_reader.stop()
             
             # --- 5. 數據後處理 (Data Post-Processing) ---
             if len(positions) > 10:
