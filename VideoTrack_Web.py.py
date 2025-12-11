@@ -76,83 +76,89 @@ if uploaded_file is not None:
         
         # --- 3. 校准與追蹤設定 (Canvas) ---
         st.header("3. 校準與目標設定")
-        st.info("👇 請在下方圖片上直接拖曳畫框 (先畫紅色校準物，再畫綠色目標)")
+        
+        # 使用 1:2 的比例分欄
+        col_c1, col_c2 = st.columns([1, 2])
+        
+        with col_c1:
+            st.info("👇 操作說明")
+            st.markdown("請在右側圖片上依序畫框：")
+            st.markdown("1. **紅色框**: 校準槓片")
+            st.markdown("2. **綠色框**: 追蹤目標")
+            
+            from streamlit_drawable_canvas import st_canvas
+            from PIL import Image
 
-        from streamlit_drawable_canvas import st_canvas
-        from PIL import Image
+            # 縮放圖片以適應畫布
+            max_canvas_width = 700
+            canvas_scale = 1.0
+            if w_orig > max_canvas_width:
+                 canvas_scale = max_canvas_width / w_orig
+            
+            display_w = int(w_orig * canvas_scale)
+            display_h = int(h_orig * canvas_scale)
+            
+            frame_rgb = cv2.cvtColor(first_frame, cv2.COLOR_BGR2RGB)
+            # Force RGBA to prevent black screen issues
+            frame_pil = Image.fromarray(frame_rgb).resize((display_w, display_h)).convert("RGBA")
+            
+            # 畫布設定
+            drawing_mode = st.selectbox(
+                "選擇繪製工具:",
+                ("rect", "transform"),
+                format_func=lambda x: "📦 畫框 (Rect)" if x == "rect" else "✋ 調整 (Transform)"
+            )
+            
+            stroke_color = st.color_picker("邊框顏色", "#FF0000") # Dummy picker
+            
+            # Placeholder for status messages (Empty initially)
+            status_container = st.container()
 
-        # 縮放圖片以適應畫布 (避免過大造成 WebSocket 斷線)
-        max_canvas_width = 700
-        canvas_scale = 1.0
-        if w_orig > max_canvas_width:
-             canvas_scale = max_canvas_width / w_orig
-        
-        display_w = int(w_orig * canvas_scale)
-        display_h = int(h_orig * canvas_scale)
-        
-        frame_rgb = cv2.cvtColor(first_frame, cv2.COLOR_BGR2RGB)
-        frame_pil = Image.fromarray(frame_rgb).resize((display_w, display_h))
-        
-        # 畫布設定
-        drawing_mode = st.selectbox(
-            "選擇繪製工具:",
-            ("rect", "transform"),
-            format_func=lambda x: "📦 畫框 (Rect)" if x == "rect" else "✋ 調整 (Transform)"
-        )
-        
-        stroke_color = st.color_picker("邊框顏色 (第一框=固定紅, 第二框=固定綠)", "#FF0000") # Dummy picker for user feedback, logic below overrides
-        
-        st.write("請依序繪製：")
-        st.markdown("1. **紅色框**: 校準槓片 (Calibration Frame)")
-        st.markdown("2. **綠色框**: 追蹤目標 (Tracking Target)")
-
-        # Create a canvas component
-        canvas_result = st_canvas(
-            fill_color="rgba(255, 165, 0, 0.1)",  # Fixed fill color with some opacity
-            stroke_width=3,
-            stroke_color="#FF0000", # Default red, but we handle logic by order
-            background_image=frame_pil,
-            update_streamlit=True,
-            height=display_h,
-            width=display_w,
-            drawing_mode=drawing_mode,
-            key="canvas",
-        )
+        with col_c2:
+            # Create a canvas component
+            # Dynamic key ensures re-render when start time changes
+            canvas_result = st_canvas(
+                fill_color="rgba(255, 165, 0, 0.1)",
+                stroke_width=3,
+                stroke_color="#FF0000",
+                background_image=frame_pil,
+                update_streamlit=True,
+                height=display_h,
+                width=display_w,
+                drawing_mode=drawing_mode,
+                key=f"canvas_{start_t}", 
+            )
 
         plate_rect = None
         target_rect = None
         
-        if canvas_result.json_data is not None:
-            objects = canvas_result.json_data["objects"]
-            if len(objects) > 0:
-                # 假設用戶依序畫框：第一個是 Plate，第二個是 Target
-                # 為了更好的體驗，我們可以根據顏色或標籤，但簡單起見先用順序
-                # 並且在 UI 上提示
-                
-                # 第一個框：校準物
-                obj1 = objects[0]
-                plate_rect = (
-                    int(obj1["left"] / canvas_scale), 
-                    int(obj1["top"] / canvas_scale), 
-                    int(obj1["width"] / canvas_scale), 
-                    int(obj1["height"] / canvas_scale)
-                )
-                st.sidebar.success(f"✅ 校準物已設定: {plate_rect}")
-
-                if len(objects) > 1:
-                    # 第二個框：追蹤目標
-                    obj2 = objects[1]
-                    target_rect = (
-                        int(obj2["left"] / canvas_scale), 
-                        int(obj2["top"] / canvas_scale), 
-                        int(obj2["width"] / canvas_scale), 
-                        int(obj2["height"] / canvas_scale)
+        # Populate Status in Left Column
+        with status_container:
+            if canvas_result.json_data is not None:
+                objects = canvas_result.json_data["objects"]
+                if len(objects) > 0:
+                    obj1 = objects[0]
+                    plate_rect = (
+                        int(obj1["left"] / canvas_scale), 
+                        int(obj1["top"] / canvas_scale), 
+                        int(obj1["width"] / canvas_scale), 
+                        int(obj1["height"] / canvas_scale)
                     )
-                    st.sidebar.success(f"✅ 追蹤目標已設定: {target_rect}")
+                    st.success(f"✅ 校準物已設定")
+
+                    if len(objects) > 1:
+                        obj2 = objects[1]
+                        target_rect = (
+                            int(obj2["left"] / canvas_scale), 
+                            int(obj2["top"] / canvas_scale), 
+                            int(obj2["width"] / canvas_scale), 
+                            int(obj2["height"] / canvas_scale)
+                        )
+                        st.success(f"✅ 追蹤目標已設定")
+                    else:
+                        st.warning("⚠️ 請再畫一個框選取追蹤目標")
                 else:
-                    st.sidebar.warning("⚠️ 請再畫一個框選取追蹤目標 (Bar End)")
-            else:
-                st.sidebar.info("請在圖片上畫出第一個框 (校準物)")
+                    st.info("等待繪製第一個框...")
 
         # --- 4. 執行分析 ---
         st.markdown("###")
