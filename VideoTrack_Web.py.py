@@ -257,7 +257,7 @@ if uploaded_file is not None:
         if "calibration_data" not in st.session_state:
             st.session_state.calibration_data = None
 
-        @st.dialog("📏 畫布校準 (Drawing Canvas)")
+        @st.experimental_dialog("📏 畫布校準 (Drawing Canvas)")
         def calibration_dialog(frame_pil_img, d_width, d_height, scale_factor, stroke_clr):
             st.warning("📱 **手機提示**: 請用**單指**畫框，若畫布移動請用**雙指**拖曳。")
             
