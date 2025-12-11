@@ -111,31 +111,41 @@ if uploaded_file is not None:
     
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
-    if np.isnan(fps) or fps < 1: fps = 30
-    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    duration = frame_count / fps
-    
     # --- Global Settings (Sidebar) ---
     st.sidebar.header("設定 (Settings)")
     
     # 1. Mobile Optimization
     is_mobile = st.sidebar.checkbox("📱 手機模式 (Mobile View)", value=True, help="開啟以獲得最佳手機體驗")
     
-    # 2. Rotation
-    rotate_option = st.sidebar.selectbox(
-        "🔄 影片旋轉 (Rotation)",
-        options=[0, 90, 180, 270],
-        index=0,
-        help="若影片方向不正確 (如手機橫拍)，請調整此選項"
-    )
+    # 2. Rotation (Auto Portrait)
+    # Get Video Dimensions
+    v_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    v_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    
+    st.sidebar.subheader("影片旋轉 (Rotation)")
+    auto_portrait = st.sidebar.checkbox("🔄 自動轉正 (Auto Portrait)", value=True, help="若影片為橫向 (寬 > 高)，自動旋轉 90 度")
     
     rotation_code = None
-    if rotate_option == 90:
-        rotation_code = cv2.ROTATE_90_CLOCKWISE
-    elif rotate_option == 180:
-        rotation_code = cv2.ROTATE_180
-    elif rotate_option == 270:
-        rotation_code = cv2.ROTATE_90_COUNTERCLOCKWISE
+    
+    if auto_portrait:
+        if v_width > v_height:
+            rotation_code = cv2.ROTATE_90_CLOCKWISE
+            st.sidebar.info(f"已自動旋轉 90 度\n(原始: {v_width}x{v_height})")
+    else:
+        # Manual Rotation
+        rotate_option = st.sidebar.selectbox(
+            "手動調整 (Manual)",
+            options=[0, 90, 180, 270],
+            index=0,
+            help="若自動轉正不正確，請關閉自動模式並手動選擇"
+        )
+        
+        if rotate_option == 90:
+            rotation_code = cv2.ROTATE_90_CLOCKWISE
+        elif rotate_option == 180:
+            rotation_code = cv2.ROTATE_180
+        elif rotate_option == 270:
+            rotation_code = cv2.ROTATE_90_COUNTERCLOCKWISE
 
     # --- 2. 剪輯 (Trim) ---
     st.header("2. 設定分析範圍")
