@@ -377,7 +377,7 @@ if uploaded_file is not None:
             # To do overlap: 
             # We put the Image in a markdown logic that has negative margin bottom?
             
-             st.markdown(
+            st.markdown(
                 f'''
                 <div style="position: relative; width: {display_w}px; height: {display_h}px;">
                     <div style="position: absolute; top: 0; left: 0; z-index: 1;">
