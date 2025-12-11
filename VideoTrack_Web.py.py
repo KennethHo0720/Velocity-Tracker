@@ -90,10 +90,14 @@ if uploaded_file is not None:
             from PIL import Image
 
             # 縮放圖片以適應畫布 (避免過大造成 WebSocket 斷線)
-            max_canvas_width = 700
-            canvas_scale = 1.0
-            if w_orig > max_canvas_width:
-                 canvas_scale = max_canvas_width / w_orig
+            # 同時也處理直向影片過高的問題
+            max_canvas_width = 800
+            max_canvas_height = 500  # 限制高度，避免垂直影片佔滿螢幕
+            
+            # 計算縮放比例 (取較小的 scale 以適應兩個維度)
+            scale_w = max_canvas_width / w_orig
+            scale_h = max_canvas_height / h_orig
+            canvas_scale = min(1.0, scale_w, scale_h)
             
             display_w = int(w_orig * canvas_scale)
             display_h = int(h_orig * canvas_scale)
@@ -102,7 +106,11 @@ if uploaded_file is not None:
             frame_pil = Image.fromarray(frame_rgb).resize((display_w, display_h))
             
             # Debug info to verify image size
-            st.caption(f"Debug: Canvas Size {display_w}x{display_h}")
+            st.caption(f"Debug: Canvas Size {display_w}x{display_h} (Original: {w_orig}x{h_orig})")
+            
+            # [DEBUG] 顯示一張靜態圖片確認 PIL 物件是否正常
+            # 如果這張圖能顯示，但 Canvas 是黑的，那就是 Canvas 套件的問題
+            st.image(frame_pil, caption="[Debug] 預覽圖片 (若此顯示正常則圖片沒問題)")
             
             # 畫布設定
             drawing_mode = st.selectbox(
