@@ -38,7 +38,7 @@ class ThreadedVideoReader:
         self.end_frame = end_frame
         self.scale_factor = scale_factor
         self.rotation_code = rotation_code
-        self.queue = queue.Queue(maxsize=128) # Buffer size
+        self.queue = queue.Queue(maxsize=1024) # Buffer size increased for performance
         self.stopped = False
         self.thread = threading.Thread(target=self.update, args=())
         self.thread.daemon = True
@@ -146,8 +146,22 @@ if uploaded_file is not None:
             rotation_code = cv2.ROTATE_90_CLOCKWISE
         elif rotate_option == 180:
             rotation_code = cv2.ROTATE_180
-        elif rotate_option == 270:
             rotation_code = cv2.ROTATE_90_COUNTERCLOCKWISE
+            
+    # 3. Performance / Speed Mode
+    st.sidebar.subheader("效能 (Performance)")
+    perf_mode = st.sidebar.radio(
+        "處理模式 (Processing Mode)",
+        ("Balanced (Default)", "High Accuracy", "Turbo Speed"),
+        index=0,
+        help="High Accuracy: 逐幀處理\nBalanced: 每 2 幀處理一次 (推薦)\nTurbo: 每 3 幀處理一次 (最快，適合長影片)"
+    )
+    
+    frame_skip = 1 # Default Balanced
+    if perf_mode == "High Accuracy":
+        frame_skip = 0
+    elif perf_mode == "Turbo Speed":
+        frame_skip = 2
 
     # --- 2. 剪輯 (Trim) ---
     st.header("2. 設定分析範圍")
@@ -381,17 +395,22 @@ if uploaded_file is not None:
                 if not ret:
                     break
                 
-                # Tracking (CPU Bound) happens here parallel to next frame reading (I/O Bound)
-                success, box = tracker.update(frame_small)
+                # Performance Optimization: Frame Skipping
+                current_process_idx = idx - start_frame
                 
-                if success:
-                    (x, y, bw, bh) = [int(v) for v in box]
-                    cy_small = y + bh/2
-                    # 還原回原始尺寸的 Y 座標
-                    cy_original = cy_small / process_scale
+                # Default assume success for skipped frames (we will interpolate later)
+                # But for tracking, we only update tracker on specific frames
+                
+                if current_process_idx == 0 or current_process_idx % (frame_skip + 1) == 0:
+                    success, box = tracker.update(frame_small)
                     
-                    positions.append(cy_original)
-                    times.append(idx / fps)
+                    if success:
+                        (x, y, bw, bh) = [int(v) for v in box]
+                        cy_small = y + bh/2
+                        cy_original = cy_small / process_scale
+                        
+                        positions.append(cy_original)
+                        times.append(idx / fps)
                 
                 # 更新進度條 (每 10 幀更新一次以節省資源)
                 if total_frames > 0 and idx % 10 == 0:
@@ -402,9 +421,17 @@ if uploaded_file is not None:
             video_reader.stop()
             
             # --- 5. 數據後處理 (Data Post-Processing) ---
-            if len(positions) > 10:
-                pos_array = np.array(positions)
-                time_array = np.array(times)
+            if len(positions) > 5:
+                # Interpolation for Performance Mode
+                if frame_skip > 0 and len(positions) > 1:
+                    full_times = np.linspace(times[0], times[-1], int((times[-1]-times[0])*fps))
+                    full_positions = np.interp(full_times, times, positions)
+                    
+                    time_array = full_times
+                    pos_array = full_positions
+                else:
+                    pos_array = np.array(positions)
+                    time_array = np.array(times)
                 
                 # A. 像素轉位移 (Y軸向下為正，需反轉)
                 # 假設起始位置為 0，向上移動為正
