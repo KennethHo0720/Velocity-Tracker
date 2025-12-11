@@ -149,34 +149,51 @@ if uploaded_file is not None:
         # --- 3. 校准與追蹤設定 (Canvas) ---
         st.header("3. 校準與目標設定")
         
-        # 使用 1:2 的比例分欄
-        col_c1, col_c2 = st.columns([1, 2])
+        # --- Mobile Optimization ---
+        # Default to Mobile View 
+        is_mobile = st.sidebar.checkbox("📱 手機模式 (Mobile View)", value=True, help="開啟已獲得最佳手機體驗")
         
-        with col_c1:
-            st.info("👇 操作說明")
-            st.markdown("請在右側圖片上依序畫框：")
-            st.markdown("1. **紅色框**: 校準槓片")
-            st.markdown("2. **綠色框**: 追蹤目標")
-            
-            from streamlit_drawable_canvas import st_canvas
-            from PIL import Image
-
-            # 縮放圖片以適應畫布 (避免過大造成 WebSocket 斷線)
-            # 同時也處理直向影片過高的問題
+        if is_mobile:
+            max_canvas_width = 350 # Typical mobile width
+            max_canvas_height = 500
+        else:
             max_canvas_width = 800
-            max_canvas_height = 500  # 限制高度，避免垂直影片佔滿螢幕
-            
-            # 計算縮放比例 (取較小的 scale 以適應兩個維度)
-            scale_w = max_canvas_width / w_orig
-            scale_h = max_canvas_height / h_orig
-            canvas_scale = min(1.0, scale_w, scale_h)
-            
-            display_w = int(w_orig * canvas_scale)
-            display_h = int(h_orig * canvas_scale)
-            
-            frame_rgb = cv2.cvtColor(first_frame, cv2.COLOR_BGR2RGB)
-            frame_pil = Image.fromarray(frame_rgb).resize((display_w, display_h))
-            
+            max_canvas_height = 600
+
+        # Instructions in expander to save space
+        with st.expander("TODO: 繪圖操作說明 (點擊展開)", expanded=not is_mobile):
+             st.info("👇 操作說明")
+             st.markdown("請在下方圖片上依序畫框：")
+             st.markdown("1. **紅色框**: 校準槓片")
+             st.markdown("2. **綠色框**: 追蹤目標")
+             st.caption("提示: 手機上請使用雙指縮放或拖曳來調整位置")
+
+        from streamlit_drawable_canvas import st_canvas
+        from PIL import Image
+
+        # 縮放圖片以適應畫布
+        h_orig, w_orig = first_frame.shape[:2]
+        
+        # 計算縮放比例
+        scale_w = max_canvas_width / w_orig
+        scale_h = max_canvas_height / h_orig
+        canvas_scale = min(1.0, scale_w, scale_h)
+        
+        display_w = int(w_orig * canvas_scale)
+        display_h = int(h_orig * canvas_scale)
+        
+        frame_rgb = cv2.cvtColor(first_frame, cv2.COLOR_BGR2RGB)
+        frame_pil = Image.fromarray(frame_rgb).resize((display_w, display_h))
+        
+        # Layout 
+        # On mobile, we stack everything. On desktop, we can use columns
+        if is_mobile:
+             col_controls = st.container()
+             col_canvas = st.container()
+        else:
+             col_controls, col_canvas = st.columns([1, 2])
+
+        with col_controls:
             # 畫布設定
             drawing_mode = st.selectbox(
                 "選擇繪製工具:",
@@ -193,11 +210,15 @@ if uploaded_file is not None:
             # Show current color to user (read-only feedback)
             st.markdown(f"**當前筆刷顏色**: <span style='color:{stroke_color}'>{'🟥 紅色 (校準物)' if stroke_color=='#FF0000' else '🟩 綠色 (追蹤目標)'}</span>", unsafe_allow_html=True)
             
-            # Placeholder for status messages (Empty initially)
+            # Placeholder for status messages
             status_container = st.container()
 
-        with col_c2:
+        with col_canvas:
             # Create a canvas component
+            # Center the canvas in mobile view for better aesthetic
+            if is_mobile:
+                 st.write("▼ 請在下方繪圖")
+            
             canvas_result = st_canvas(
                 fill_color="rgba(255, 165, 0, 0.1)",
                 stroke_width=3,
@@ -207,7 +228,7 @@ if uploaded_file is not None:
                 height=display_h,
                 width=display_w,
                 drawing_mode=drawing_mode,
-                key=f"canvas_{start_t}", 
+                key=f"canvas_{start_t}_mob_{is_mobile}",  # Unique key for mode switch
             )
 
         plate_rect = None
