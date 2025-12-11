@@ -32,11 +32,13 @@ def smooth_data(data, window_size):
     return np.convolve(data, window, mode='same')
 
 class ThreadedVideoReader:
-    def __init__(self, path, start_frame, end_frame, scale_factor):
+class ThreadedVideoReader:
+    def __init__(self, path, start_frame, end_frame, scale_factor, rotation_code=None):
         self.path = path
         self.start_frame = start_frame
         self.end_frame = end_frame
         self.scale_factor = scale_factor
+        self.rotation_code = rotation_code
         self.queue = queue.Queue(maxsize=128) # Buffer size
         self.stopped = False
         self.thread = threading.Thread(target=self.update, args=())
@@ -61,6 +63,10 @@ class ThreadedVideoReader:
                     self.stop()
                     break
                 
+                # Rotation
+                if self.rotation_code is not None:
+                    frame = cv2.rotate(frame, self.rotation_code)
+
                 # Pre-process in thread
                 frame_small = cv2.resize(frame, (0,0), fx=self.scale_factor, fy=self.scale_factor)
                 
@@ -109,6 +115,28 @@ if uploaded_file is not None:
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     duration = frame_count / fps
     
+    # --- Global Settings (Sidebar) ---
+    st.sidebar.header("設定 (Settings)")
+    
+    # 1. Mobile Optimization
+    is_mobile = st.sidebar.checkbox("📱 手機模式 (Mobile View)", value=True, help="開啟以獲得最佳手機體驗")
+    
+    # 2. Rotation
+    rotate_option = st.sidebar.selectbox(
+        "🔄 影片旋轉 (Rotation)",
+        options=[0, 90, 180, 270],
+        index=0,
+        help="若影片方向不正確 (如手機橫拍)，請調整此選項"
+    )
+    
+    rotation_code = None
+    if rotate_option == 90:
+        rotation_code = cv2.ROTATE_90_CLOCKWISE
+    elif rotate_option == 180:
+        rotation_code = cv2.ROTATE_180
+    elif rotate_option == 270:
+        rotation_code = cv2.ROTATE_90_COUNTERCLOCKWISE
+
     # --- 2. 剪輯 (Trim) ---
     st.header("2. 設定分析範圍")
     st.info("💡 拖曳滑桿來選擇起始與結束點 (即時預覽)")
@@ -120,6 +148,8 @@ if uploaded_file is not None:
         cap.set(cv2.CAP_PROP_POS_MSEC, start_t * 1000)
         ret_s, frame_s = cap.read()
         if ret_s:
+            if rotation_code is not None:
+                frame_s = cv2.rotate(frame_s, rotation_code)
             st.image(frame_s, channels="BGR", caption=f"Start: {start_t}s", width=300)
             
     with col_t2:
@@ -127,6 +157,8 @@ if uploaded_file is not None:
         cap.set(cv2.CAP_PROP_POS_MSEC, end_t * 1000)
         ret_e, frame_e = cap.read()
         if ret_e:
+            if rotation_code is not None:
+                frame_e = cv2.rotate(frame_e, rotation_code)
             st.image(frame_e, channels="BGR", caption=f"End: {end_t}s", width=300)
 
     if start_t >= end_t:
@@ -144,14 +176,16 @@ if uploaded_file is not None:
     ret, first_frame = cap.read()
     
     if ret:
+        if rotation_code is not None:
+            first_frame = cv2.rotate(first_frame, rotation_code)
+
         h_orig, w_orig = first_frame.shape[:2]
         
         # --- 3. 校准與追蹤設定 (Canvas) ---
         st.header("3. 校準與目標設定")
         
-        # --- Mobile Optimization ---
-        # Default to Mobile View 
-        is_mobile = st.sidebar.checkbox("📱 手機模式 (Mobile View)", value=True, help="開啟已獲得最佳手機體驗")
+        # --- Mobile Optimization (Moved to Global Settings) ---
+        # is_mobile definition moved to top
         
         if is_mobile:
             max_canvas_width = 350 # Typical mobile width
@@ -323,7 +357,7 @@ if uploaded_file is not None:
             # --- 分析迴圈 ---
             # --- 分析迴圈 (Optimized with Threading) ---
             # Start the threaded video reader
-            video_reader = ThreadedVideoReader(video_path, start_frame, end_frame_idx, process_scale)
+            video_reader = ThreadedVideoReader(video_path, start_frame, end_frame_idx, process_scale, rotation_code)
             video_reader.start()
             
             while video_reader.more():
