@@ -281,18 +281,11 @@ if uploaded_file is not None:
             if is_mobile:
                  st.write("▼ 請在下方繪圖")
             
-            # Manual Base64 Conversion to bypass library bug with Streamlit 1.xx
-            # This fixes "AttributeError: ... image_to_url" and Black Screen issues
-            buffered = io.BytesIO()
-            frame_pil.save(buffered, format="PNG")
-            img_str = base64.b64encode(buffered.getvalue()).decode()
-            img_data_url = "data:image/png;base64," + img_str
-
             canvas_result = st_canvas(
                 fill_color="rgba(255, 165, 0, 0.1)",
                 stroke_width=3,
                 stroke_color=stroke_color,
-                background_image=img_data_url, # Pass Data URL instead of PIL object
+                background_image=frame_pil,
                 update_streamlit=True,
                 height=display_h,
                 width=display_w,
