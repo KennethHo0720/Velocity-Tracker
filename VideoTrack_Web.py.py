@@ -254,97 +254,100 @@ if uploaded_file is not None:
         frame_rgb = cv2.cvtColor(first_frame, cv2.COLOR_BGR2RGB)
         frame_pil = Image.fromarray(frame_rgb).resize((display_w, display_h))
         
-        # Layout 
-        # On mobile, we stack everything. On desktop, we can use columns
-        if is_mobile:
-             col_controls = st.container()
-             col_canvas = st.container()
-        else:
-             col_controls, col_canvas = st.columns([1, 2])
+        if "calibration_data" not in st.session_state:
+            st.session_state.calibration_data = None
 
-        with col_controls:
-            # 畫布設定
-            drawing_mode = st.selectbox(
-                "選擇繪製工具:",
+        @st.dialog("📏 畫布校準 (Drawing Canvas)")
+        def calibration_dialog(frame_pil_img, d_width, d_height, scale_factor, stroke_clr):
+            st.warning("📱 **手機提示**: 請用**單指**畫框，若畫布移動請用**雙指**拖曳。")
+            
+            # --- Tools ---
+            d_mode = st.selectbox(
+                "工具 (Tool):",
                 ("rect", "transform"),
-                format_func=lambda x: "📦 畫框 (Rect)" if x == "rect" else "✋ 調整 (Transform)"
+                format_func=lambda x: "📦 畫框 (Box)" if x == "rect" else "✋ 調整 (Move)",
+                key="dialog_tool_select"
             )
             
-            # --- Dynamic Color Logic ---
-            if "stroke_color" not in st.session_state:
-                st.session_state.stroke_color = "#FF0000" # Initial Red
-                
-            stroke_color = st.session_state.stroke_color
+            # --- Canvas ---
+            # Passing PIL Image to fix ValueError (verified fix)
+            bg_img = np.array(frame_pil_img) 
             
-            # Show current color to user (read-only feedback)
-            st.markdown(f"**當前筆刷顏色**: <span style='color:{stroke_color}'>{'🟥 紅色 (校準物)' if stroke_color=='#FF0000' else '🟩 綠色 (追蹤目標)'}</span>", unsafe_allow_html=True)
-            
-            # Placeholder for status messages
-            status_container = st.container()
-
-        with col_canvas:
-            # Create a canvas component
-            # Center the canvas in mobile view for better aesthetic
-            if is_mobile:
-                 st.write("▼ 請在下方繪圖")
-            
-            # Debugging Type Issue
-            # st.write(f"Frame Type: {type(frame_pil)}")
-            
-            # --- Clean/Native approach for Canvas ---
-            # Passing PIL Image is required for this version of the library to avoid ValueError
-            
-            canvas_result = st_canvas(
+            # Display Canvas
+            c_result = st_canvas(
                 fill_color="rgba(255, 165, 0, 0.1)",
                 stroke_width=3,
-                stroke_color=stroke_color,
-                background_image=frame_pil,
+                stroke_color=stroke_clr,
+                background_image=frame_pil_img, # Use PIL directly
                 update_streamlit=True,
-                height=display_h,
-                width=display_w,
-                drawing_mode=drawing_mode,
-                key=f"canvas_{start_t}_mob_{is_mobile}_v5_fixed",
-                display_toolbar=False,
+                height=d_height,
+                width=d_width,
+                drawing_mode=d_mode,
+                key="dialog_canvas_v1",
+                display_toolbar=False, # Keep simplified
             )
+            
+            # --- Real-time Feedback ---
+            obj_cnt = 0
+            if c_result.json_data is not None:
+                obj_cnt = len(c_result.json_data["objects"])
+            
+            target_clr = "#00FF00" if obj_cnt >= 1 else "#FF0000"
+            if stroke_clr != target_clr:
+                 st.session_state.stroke_color = target_clr
+                 st.rerun()
+
+            st.markdown(f"**當前筆刷**: <span style='color:{target_clr}'>{'🟥 紅色 (校準槓片)' if target_clr=='#FF0000' else '🟩 綠色 (追蹤目標)'}</span>", unsafe_allow_html=True)
+            
+            if st.button("💾 完成並儲存 (Save & Close)", type="primary"):
+                if c_result.json_data is not None:
+                     objs = c_result.json_data["objects"]
+                     if len(objs) >= 2:
+                         st.session_state.calibration_data = c_result.json_data
+                         st.session_state.show_calibration_dialog = False # Close flag
+                         st.rerun()
+                     else:
+                         st.error("⚠️ 請至少畫兩個框 (1.槓片 2.目標)")
+                else:
+                    st.error("⚠️ 請畫框")
+
+        # --- Main Layout for Calibration ---
+        # Logic to open dialog
+        col_status, col_btn = st.columns([2, 1])
+        
+        with col_btn:
+            if st.button("📱 設定/重設畫布 (Calibrate)", type="primary", use_container_width=True):
+                 calibration_dialog(frame_pil, display_w, display_h, canvas_scale, st.session_state.stroke_color)
 
         plate_rect = None
         target_rect = None
         
-        # Populate Status in Left Column
-        with status_container:
-            if canvas_result.json_data is not None:
-                objects = canvas_result.json_data["objects"]
-                obj_count = len(objects)
-                
-                # --- Update Color State if needed ---
-                target_color = "#00FF00" if obj_count >= 1 else "#FF0000"
-                if st.session_state.stroke_color != target_color:
-                    st.session_state.stroke_color = target_color
-                    st.rerun()
-
-                if obj_count > 0:
-                    obj1 = objects[0]
-                    plate_rect = (
-                        int(obj1["left"] / canvas_scale), 
-                        int(obj1["top"] / canvas_scale), 
-                        int(obj1["width"] / canvas_scale), 
-                        int(obj1["height"] / canvas_scale)
-                    )
-                    st.success(f"✅ 校準物已設定")
-
-                    if obj_count > 1:
-                        obj2 = objects[1]
-                        target_rect = (
-                            int(obj2["left"] / canvas_scale), 
-                            int(obj2["top"] / canvas_scale), 
-                            int(obj2["width"] / canvas_scale), 
-                            int(obj2["height"] / canvas_scale)
-                        )
-                        st.success(f"✅ 追蹤目標已設定")
-                    else:
-                        st.warning("⚠️ 請再畫一個框選取追蹤目標")
-                else:
-                    st.info("等待繪製第一個框...")
+        # Process Saved Data
+        if st.session_state.calibration_data is not None:
+            objects = st.session_state.calibration_data["objects"]
+            if len(objects) >= 2:
+                 obj1 = objects[0]
+                 plate_rect = (
+                    int(obj1["left"] / canvas_scale), 
+                    int(obj1["top"] / canvas_scale), 
+                    int(obj1["width"] / canvas_scale), 
+                    int(obj1["height"] / canvas_scale)
+                 )
+                 
+                 obj2 = objects[1]
+                 target_rect = (
+                    int(obj2["left"] / canvas_scale), 
+                    int(obj2["top"] / canvas_scale), 
+                    int(obj2["width"] / canvas_scale), 
+                    int(obj2["height"] / canvas_scale)
+                 )
+                 
+                 with col_status:
+                     st.success("✅ 校準完成 Ready to Analyze")
+                     st.caption(f"Plate: {plate_rect}, Target: {target_rect}")
+        else:
+             with col_status:
+                 st.info("👈 請點擊按鈕開啟畫布")
 
         # --- 4. 執行分析 ---
         st.markdown("###")
