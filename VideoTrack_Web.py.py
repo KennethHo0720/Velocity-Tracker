@@ -88,8 +88,6 @@ if uploaded_file is not None:
             
             from streamlit_drawable_canvas import st_canvas
             from PIL import Image
-            import base64
-            import io
 
             # 縮放圖片以適應畫布 (避免過大造成 WebSocket 斷線)
             max_canvas_width = 700
@@ -102,13 +100,6 @@ if uploaded_file is not None:
             
             frame_rgb = cv2.cvtColor(first_frame, cv2.COLOR_BGR2RGB)
             frame_pil = Image.fromarray(frame_rgb).resize((display_w, display_h))
-            
-            # --- FIX: Convert Image to Base64 String ---
-            # 直接轉成 Base64 字串餵給 Canvas，避開物件傳遞問題
-            buffered = io.BytesIO()
-            frame_pil.save(buffered, format="PNG")
-            img_str = base64.b64encode(buffered.getvalue()).decode()
-            bg_image_url = "data:image/png;base64," + img_str
             
             # Debug info to verify image size
             st.caption(f"Debug: Canvas Size {display_w}x{display_h}")
@@ -128,12 +119,12 @@ if uploaded_file is not None:
         with col_c2:
             # Create a canvas component
             # Dynamic key ensures re-render when start time changes
-            # Pass bg_image_url instead of PIL object
+            # Pass frame_pil directly
             canvas_result = st_canvas(
                 fill_color="rgba(255, 165, 0, 0.1)",
                 stroke_width=3,
                 stroke_color="#FF0000",
-                background_image=bg_image_url,
+                background_image=frame_pil,
                 update_streamlit=True,
                 height=display_h,
                 width=display_w,
