@@ -6,7 +6,7 @@ import tempfile
 import pandas as pd
 
 # --- 頁面配置 ---
-st.set_page_config(page_title="Barbell Tracker Pro V2", layout="centered") 
+st.set_page_config(page_title="Barbell Tracker Pro V2", layout="wide") 
 
 # 自定義 CSS 以優化手機顯示
 st.markdown("""
@@ -81,8 +81,8 @@ if uploaded_file is not None:
         from streamlit_drawable_canvas import st_canvas
         from PIL import Image
 
-        # 縮放圖片以適應畫布 (避免過大)
-        max_canvas_width = 800
+        # 縮放圖片以適應畫布 (避免過大造成 WebSocket 斷線)
+        max_canvas_width = 700
         canvas_scale = 1.0
         if w_orig > max_canvas_width:
              canvas_scale = max_canvas_width / w_orig
