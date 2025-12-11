@@ -105,13 +105,6 @@ if uploaded_file is not None:
             frame_rgb = cv2.cvtColor(first_frame, cv2.COLOR_BGR2RGB)
             frame_pil = Image.fromarray(frame_rgb).resize((display_w, display_h))
             
-            # Debug info to verify image size
-            st.caption(f"Debug: Canvas Size {display_w}x{display_h} (Original: {w_orig}x{h_orig})")
-            
-            # [DEBUG] 顯示一張靜態圖片確認 PIL 物件是否正常
-            # 如果這張圖能顯示，但 Canvas 是黑的，那就是 Canvas 套件的問題
-            st.image(frame_pil, caption="[Debug] 預覽圖片 (若此顯示正常則圖片沒問題)")
-            
             # 畫布設定
             drawing_mode = st.selectbox(
                 "選擇繪製工具:",
@@ -119,19 +112,24 @@ if uploaded_file is not None:
                 format_func=lambda x: "📦 畫框 (Rect)" if x == "rect" else "✋ 調整 (Transform)"
             )
             
-            stroke_color = st.color_picker("邊框顏色", "#FF0000") # Dummy picker
+            # --- Dynamic Color Logic ---
+            if "stroke_color" not in st.session_state:
+                st.session_state.stroke_color = "#FF0000" # Initial Red
+                
+            stroke_color = st.session_state.stroke_color
+            
+            # Show current color to user (read-only feedback)
+            st.markdown(f"**當前筆刷顏色**: <span style='color:{stroke_color}'>{'🟥 紅色 (校準物)' if stroke_color=='#FF0000' else '🟩 綠色 (追蹤目標)'}</span>", unsafe_allow_html=True)
             
             # Placeholder for status messages (Empty initially)
             status_container = st.container()
 
         with col_c2:
             # Create a canvas component
-            # Dynamic key ensures re-render when start time changes
-            # Pass frame_pil directly
             canvas_result = st_canvas(
                 fill_color="rgba(255, 165, 0, 0.1)",
                 stroke_width=3,
-                stroke_color="#FF0000",
+                stroke_color=stroke_color,
                 background_image=frame_pil,
                 update_streamlit=True,
                 height=display_h,
@@ -147,7 +145,15 @@ if uploaded_file is not None:
         with status_container:
             if canvas_result.json_data is not None:
                 objects = canvas_result.json_data["objects"]
-                if len(objects) > 0:
+                obj_count = len(objects)
+                
+                # --- Update Color State if needed ---
+                target_color = "#00FF00" if obj_count >= 1 else "#FF0000"
+                if st.session_state.stroke_color != target_color:
+                    st.session_state.stroke_color = target_color
+                    st.rerun()
+
+                if obj_count > 0:
                     obj1 = objects[0]
                     plate_rect = (
                         int(obj1["left"] / canvas_scale), 
@@ -157,7 +163,7 @@ if uploaded_file is not None:
                     )
                     st.success(f"✅ 校準物已設定")
 
-                    if len(objects) > 1:
+                    if obj_count > 1:
                         obj2 = objects[1]
                         target_rect = (
                             int(obj2["left"] / canvas_scale), 
