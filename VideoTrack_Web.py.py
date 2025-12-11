@@ -281,6 +281,9 @@ if uploaded_file is not None:
             if is_mobile:
                  st.write("▼ 請在下方繪圖")
             
+            # Debugging Type Issue
+            # st.write(f"Frame Type: {type(frame_pil)}")
+            
             canvas_result = st_canvas(
                 fill_color="rgba(255, 165, 0, 0.1)",
                 stroke_width=3,
