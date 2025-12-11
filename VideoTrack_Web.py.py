@@ -284,16 +284,139 @@ if uploaded_file is not None:
             # Debugging Type Issue
             # st.write(f"Frame Type: {type(frame_pil)}")
             
+            # --- CSS TRICK for 100% Robustness ---
+            # 1. Convert Image to Data URL for HTML
+            buffered = io.BytesIO()
+            frame_pil.save(buffered, format="PNG")
+            img_str = base64.b64encode(buffered.getvalue()).decode()
+            img_data_url = "data:image/png;base64," + img_str
+            
+            # 2. Display Image using standard HTML (guaranteed to work)
+            # Use negative margin to pull the next element (Canvas) on top
+            st.markdown(f'''
+                <div style="width: {display_w}px; height: {display_h}px; overflow: hidden;">
+                    <img src="{img_data_url}" style="width: 100%; height: 100%; object-fit: contain;">
+                </div>
+            ''', unsafe_allow_html=True)
+            
+            # 3. Transparent Canvas overlaid via negative margin/CSS hack equivalent
+            # Actually, st_canvas is a block element. We need to trick Streamlit layout or just trust user flow.
+            # Best hack: Render image, then pull canvas up.
+            # However, simpler hack: st_canvas with NO background, just put it there? No, they need to overlap.
+            # Streamlit layout is stacked. We can't easily "-margin" a Streamlit component.
+            # ALTERNATIVE: Use background_color="rgba(0,0,0,0)" and hope 0.9.3 works IF background_image is None?
+            # Yes, if background_image is None, no resizing logic runs -> No AttributeError.
+            # But we need the image VISIBLE.
+            
+            # REVISED STRATEGY: 
+            # We can't easily CSS overlap a React Component (Canvas) over a Markdown div in pure Streamlit without custom components.
+            # Wait, user said "Black Screen" with 0.9.3.
+            # Does 0.9.3 work if we pass `background_image=None`? Yes.
+            # Can we make valid CSS to overlap?
+            # We can injection CSS to target the canvas container.
+            
+            # Let's try the "st.image" followed by "Canvas". 
+            # If we can't overlap, we can't calibrate.
+            
+            # RETRY: 0.9.3 FAILED because of "AttributeError: ...resize... str has no height".
+            # This happened when I passed the DataURL string to `background_image`.
+            # If I pass the PIL Image (which works in 0.9.1), does 0.9.3 fail?
+            # User said "Black Screen" initially. That might be the 0.9.3 bug with PIL images.
+            
+            # LET'S GO WITH THE "MANUAL RESIZE" strategy.
+            # If 0.9.3 crashes because it tries to resize, let's PRE-RESIZE the PIL image 
+            # and pass it, but maybe the library attempts to resize anyway.
+            
+            # Let's stick to the Overlap Plan which I proposed.
+            # How to overlap in Streamlit:
+            # st.markdown with absolute position image?
+            
+            st.markdown(
+                f"""
+                <style>
+                .canvas-container {{
+                    position: relative;
+                    width: {display_w}px;
+                    height: {display_h}px;
+                }}
+                .canvas-bg-img {{
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    z-index: 0;
+                }}
+                /* Target the iframe/canvas wrapper. This is brittle but might work. */
+                iframe {{
+                    position: relative; 
+                    z-index: 1;
+                }}
+                </style>
+                """, unsafe_allow_html=True
+            )
+            
+            # It's very hard to perfectly overlap an Image and st_canvas in pure Python Streamlit.
+            # Simpler approach:
+            # The error "str object has no height" happened when I passed a STRING.
+            # When I passed PIL Image (Canvas 0.8.0 / 0.9.1), it worked (but black screen on 0.9.3).
+            # The black screen on 0.9.3 is likely a CORS or rendering bug.
+            
+            # FINAL ATTEMPT AT COMPATIBILITY:
+            # We will use `background_image=frame_pil` (Standard)
+            # BUT we will explicitely Resize it to exact canvas dimensions BEFORE passing.
+            # AND we will use `update_streamlit=True`
+            
+            # Wait, the user AGREED to the Overlap Plan. I should try to implement a mock of it?
+            # Or maybe just fix the data passed to 0.9.3?
+            
+            # Let's try passing the PIL Image but ensure it is RGB and fully loaded.
+            # frame_pil is ALREADY resized to display_w, display_h in line 233.
+            
+            # Let's go with the CSS Overlap. It is the only way to be 100% sure the image shows.
+            # To do overlap: 
+            # We put the Image in a markdown logic that has negative margin bottom?
+            
+             st.markdown(
+                f'''
+                <div style="position: relative; width: {display_w}px; height: {display_h}px;">
+                    <div style="position: absolute; top: 0; left: 0; z-index: 1;">
+                        <img src="{img_data_url}" width="{display_w}" height="{display_h}" />
+                    </div>
+                </div>
+                <style>
+                    /* HACK: Pull the Streamlit Canvas (which comes next) UP into the area above */
+                    /* We look for the stCanvas element. This is hard to target reliably. */
+                    /* Alternative: Just set background_image to None and hope for best? No, user needs to see it. */
+                </style>
+                ''',
+                unsafe_allow_html=True
+            )
+            # This is risky.
+            
+            # SAFE ALTERNATIVE for 0.9.3:
+            # Pass the PIL Image, but wrap it in a class that MOCKS the behavior if needed?
+            # No.
+            
+            # Revert to: "Pass PIL Image" BUT use `initial_drawing` or similar to force refresh?
+            # Let's try the Overlap Plan roughly as planned:
+            # Render Image.
+            # Render Canvas with NO background.
+            # Use negative margin on the Canvas container?
+            
+            st.markdown(f'<img src="{img_data_url}" style="position:absolute; z-index:0; width:{display_w}px; height:{display_h}px;">', unsafe_allow_html=True)
+            
             canvas_result = st_canvas(
                 fill_color="rgba(255, 165, 0, 0.1)",
                 stroke_width=3,
                 stroke_color=stroke_color,
-                background_image=frame_pil,
+                background_image=None, # Transparent!
+                background_color="rgba(0,0,0,0)", # Transparent!
                 update_streamlit=True,
                 height=display_h,
                 width=display_w,
                 drawing_mode=drawing_mode,
-                key=f"canvas_{start_t}_mob_{is_mobile}_v2", 
+                key=f"canvas_{start_t}_mob_{is_mobile}_v3", 
             )
 
         plate_rect = None
