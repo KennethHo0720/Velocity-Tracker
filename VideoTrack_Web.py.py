@@ -35,8 +35,10 @@ class KalmanFilter1D:
         self.P = estimated_error
         self.X = initial_value
 
-    def update(self, measurement):
+    def update(self, measurement, dt=None):
         # Prediction
+        # User's local code scales Q by time, but here we keep it simple for 1D unless we want full state
+        # The user's code uses Q ~ dt^4 for pos, here we just trust the Q parameter for now
         self.P = self.P + self.Q
 
         # Update
@@ -45,7 +47,7 @@ class KalmanFilter1D:
         self.P = (1 - K) * self.P
         return self.X
 
-def apply_kalman_filter(data, R=0.1, Q=1e-5):
+def apply_kalman_filter(data, R=0.1, Q=100.0): # Default Q increased significantly
     if len(data) == 0: return data
     # Initialize with first value
     kf = KalmanFilter1D(process_noise=Q, measurement_noise=R, estimated_error=1.0, initial_value=data[0])
@@ -389,8 +391,14 @@ if uploaded_file is not None:
             
             # 依比例縮小第一幀並初始化
             first_frame_small = cv2.resize(first_frame, (0,0), fx=process_scale, fy=process_scale)
+            
+            # --- 增強追蹤: 灰階 + CLAHE (參考 Local Logic) ---
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+            first_frame_gray = cv2.cvtColor(first_frame_small, cv2.COLOR_BGR2GRAY)
+            first_frame_enhanced = clahe.apply(first_frame_gray)
+            
             tracker = cv2.TrackerCSRT_create()
-            tracker.init(first_frame_small, roi_track_small)
+            tracker.init(first_frame_enhanced, roi_track_small)
             
             # 計算真實世界比例尺 (Meters per Pixel)
             # 假設標準片直徑 0.45 米 (45cm)
@@ -426,7 +434,11 @@ if uploaded_file is not None:
                 # But for tracking, we only update tracker on specific frames
                 
                 if current_process_idx == 0 or current_process_idx % (frame_skip + 1) == 0:
-                    success, box = tracker.update(frame_small)
+                    # --- 增強追蹤: 灰階 + CLAHE ---
+                    frame_gray = cv2.cvtColor(frame_small, cv2.COLOR_BGR2GRAY)
+                    frame_enhanced = clahe.apply(frame_gray)
+                    
+                    success, box = tracker.update(frame_enhanced)
                     
                     if success:
                         (x, y, bw, bh) = [int(v) for v in box]
@@ -461,11 +473,11 @@ if uploaded_file is not None:
                 # 假設起始位置為 0，向上移動為正
                 height_pixels = -(pos_array - pos_array[0])
                 height_m = height_pixels * meters_per_pixel
-                height_smooth = apply_kalman_filter(height_m, R=0.01) # 位置平滑 (固定 R)
+                height_smooth = apply_kalman_filter(height_m, R=0.01, Q=150.0) # 位置平滑 (高 Process Noise 適應快速爆發)
                 
                 # B. 計算速度 (Gradient)
                 velocity = np.gradient(height_smooth, time_array)
-                velocity_smooth = apply_kalman_filter(velocity, R=kalman_r) # 使用自定義 Kalman R
+                velocity_smooth = apply_kalman_filter(velocity, R=kalman_r, Q=50.0) # 速度平滑
                 
                 # C. 計算加速度 (Acceleration)
                 acceleration = np.gradient(velocity_smooth, time_array)
@@ -584,41 +596,74 @@ if uploaded_file is not None:
                 c3.metric(drop_label, f"{biggest_drop_pct:.1f}%", delta_color="inverse" if biggest_drop_pct > 10 else "normal")
 
                 # --- 繪圖 (Matplotlib) ---
-                fig, ax = plt.subplots(figsize=(10, 5))
-                # 繪製速度曲線
-                ax.plot(time_array, velocity_smooth, color='#1f77b4', linewidth=1.5, label='Velocity', alpha=0.6)
-                ax.axhline(0, color='black', alpha=0.3, linewidth=1)
+                # --- 繪圖 (Matplotlib) - PRO Style ---
+                # 使用 Dark Background 風格
+                plt.style.use('dark_background')
                 
-                # 標記 Reps (Shaded Areas & Points)
+                # Create Figure with specific bg color to match Streamlit dark theme approximation
+                fig, ax = plt.subplots(figsize=(10, 5))
+                fig.patch.set_facecolor('#0e1117') # Match Streamlit dark bg
+                ax.set_facecolor('#0e1117')
+                
+                # 1. 繪製「背景」底層曲線 (Raw Velocity)
+                ax.plot(time_array, velocity_smooth, color='#444444', linewidth=1.0, alpha=0.6, label='Raw Velocity')
+                
+                # 2. 繪製「有效向心階段」
+                max_v_limit = 0
+                
                 for i, r in enumerate(reps):
                     rep_num = i + 1
+                    t_s_idx = r['start_idx']
+                    t_e_idx = r['end_idx']
                     
-                    # Highlight Rep Duration
-                    ax.axvspan(time_array[r['start_idx']], time_array[r['end_idx']], color='green', alpha=0.1)
+                    t_segment = time_array[t_s_idx : t_e_idx+1]
+                    v_segment = velocity_smooth[t_s_idx : t_e_idx+1]
                     
-                    # Mark Peak V Point
-                    # color = 'red'
-                    # if drop_reps_indices[0] != -1 and (i == drop_reps_indices[0] or i == drop_reps_indices[1]):
-                    #    color = 'purple'
-                    
-                    # Annotate MV / MPV
-                    mid_time = (time_array[r['start_idx']] + time_array[r['end_idx']]) / 2
-                    ax.annotate(f"R{rep_num}\nMV:{r['mv']:.2f}\nMPV:{r['mpv']:.2f}", 
-                                (r['peak_t'], r['peak_v']), 
-                                xytext=(0, 20), 
-                                textcoords='offset points', 
-                                ha='center', 
-                                fontsize=8, 
-                                fontweight='bold',
-                                color='#333',
-                                bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="b", alpha=0.8))
-                    
-                    ax.scatter(r['peak_t'], r['peak_v'], color='red', s=30, zorder=5)
-
-                ax.set_title(f"Velocity Profile ({num_reps} Reps) - MV & MPV Analysis", fontsize=12)
-                ax.set_ylabel("Velocity (m/s)")
-                ax.set_xlabel("Time (s)")
-                ax.grid(True, alpha=0.3, linestyle='--')
+                    if len(t_segment) > 0:
+                        # Plot Rep Segment
+                        ax.plot(t_segment, v_segment, color='#00e5ff', linewidth=2.5)
+                        # Fill Area
+                        ax.fill_between(t_segment, v_segment, 0, color='#00e5ff', alpha=0.2)
+                        
+                        # Annotations
+                        display_val = r['mpv'] # Priority: MPV
+                        peak_time = r['peak_t']
+                        peak_val = r['peak_v']
+                        
+                        label_text = f"#{rep_num}\n{display_val:.2f}"
+                        
+                        ax.annotate(
+                            label_text, 
+                            xy=(peak_time, peak_val), 
+                            xytext=(0, 20), 
+                            textcoords='offset points', 
+                            ha='center', va='bottom',
+                            fontsize=9, fontweight='bold', color='#ffffff',
+                            bbox=dict(boxstyle="round,pad=0.3", fc="#262730", ec="#00e5ff", alpha=0.9)
+                        )
+                        
+                        max_v_limit = max(max_v_limit, peak_val)
+                        
+                # 3. 輔助線與網格
+                ax.axhline(0, color='#666666', linewidth=1, linestyle='--')
+                
+                # Axis Styling
+                ax.set_xlabel('Time (s)', color='#fafafa', fontsize=10)
+                ax.set_ylabel('Velocity (m/s)', color='#00e5ff', fontweight='bold', fontsize=10)
+                
+                ax.tick_params(axis='x', colors='#fafafa')
+                ax.tick_params(axis='y', colors='#fafafa')
+                
+                # Hide Spines
+                ax.spines['top'].set_visible(False)
+                ax.spines['right'].set_visible(False)
+                ax.spines['bottom'].set_color('#444444')
+                ax.spines['left'].set_color('#444444')
+                
+                ax.grid(True, which='major', axis='y', alpha=0.1, color="#ffffff", linestyle=':')
+                
+                if max_v_limit > 0:
+                    ax.set_ylim(top=max_v_limit * 1.3) # Leave space for annotations
                 
                 st.pyplot(fig)
                 
