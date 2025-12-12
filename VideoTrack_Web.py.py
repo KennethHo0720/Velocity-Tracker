@@ -28,11 +28,31 @@ st.caption("移植自 Desktop Pro 版 | 支援 Reps 偵測與降幅分析")
 st.markdown("---")
 
 # --- 輔助函數: 平滑處理 ---
-def smooth_data(data, window_size):
-    if len(data) < window_size: return data
-    window = np.hanning(window_size)
-    window = window / window.sum()
-    return np.convolve(data, window, mode='same')
+class KalmanFilter1D:
+    def __init__(self, process_noise, measurement_noise, estimated_error, initial_value):
+        self.Q = process_noise
+        self.R = measurement_noise
+        self.P = estimated_error
+        self.X = initial_value
+
+    def update(self, measurement):
+        # Prediction
+        self.P = self.P + self.Q
+
+        # Update
+        K = self.P / (self.P + self.R)
+        self.X = self.X + K * (measurement - self.X)
+        self.P = (1 - K) * self.P
+        return self.X
+
+def apply_kalman_filter(data, R=0.1, Q=1e-5):
+    if len(data) == 0: return data
+    # Initialize with first value
+    kf = KalmanFilter1D(process_noise=Q, measurement_noise=R, estimated_error=1.0, initial_value=data[0])
+    filtered_data = []
+    for measurement in data:
+        filtered_data.append(kf.update(measurement))
+    return np.array(filtered_data)
 
 class ThreadedVideoReader:
     def __init__(self, path, start_frame, end_frame, scale_factor, rotation_code=None):
@@ -199,7 +219,8 @@ if uploaded_file is not None:
     with st.expander("⚙️ 進階設定 (Analysis Settings)"):
         st.caption("若無法偵測到較慢的次數 (Grinders)，請嘗試降低速度門檻")
         min_velo_threshold = st.slider("最小速度門檻 (Min Velocity, m/s)", 0.05, 1.0, 0.20, step=0.05)
-        smooth_window = st.slider("平滑係數 (Smoothing Window)", 3, 21, 9, step=2)
+        kalman_r = st.slider("濾波強度 (Kalman R)", 0.01, 1.0, 0.1, step=0.01, help="數值越大，平滑效果越強，但延遲越高")
+        min_rom_threshold = st.slider("最小行程 (Min ROM, m)", 0.05, 0.80, 0.15, step=0.05, help="過濾掉行程過短的誤判 (例如臥推建議 0.15, 深蹲 0.30)")
 
     # 讀取分析起始幀 (用於畫框)
     cap.set(cv2.CAP_PROP_POS_MSEC, start_t * 1000)
@@ -440,121 +461,191 @@ if uploaded_file is not None:
                 # 假設起始位置為 0，向上移動為正
                 height_pixels = -(pos_array - pos_array[0])
                 height_m = height_pixels * meters_per_pixel
-                height_smooth = smooth_data(height_m, 15) # 平滑位移
+                height_smooth = apply_kalman_filter(height_m, R=0.01) # 位置平滑 (固定 R)
                 
                 # B. 計算速度 (Gradient)
                 velocity = np.gradient(height_smooth, time_array)
-                velocity_smooth = smooth_data(velocity, smooth_window) # 使用自定義平滑係數
+                velocity_smooth = apply_kalman_filter(velocity, R=kalman_r) # 使用自定義 Kalman R
                 
-                # C. 尋找 Reps (Peak Detection) - 移植自 Desktop 版
-                candidate_peaks = []
-                # 閾值：速度必須大於 min_velo_threshold 且是局部最大值
-                for i in range(1, len(velocity_smooth)-1):
-                    if velocity_smooth[i] > velocity_smooth[i-1] and velocity_smooth[i] > velocity_smooth[i+1]:
-                        if velocity_smooth[i] > min_velo_threshold:
-                            candidate_peaks.append({'v': velocity_smooth[i], 't': time_array[i], 'idx': i})
-                
-                # D. 合併接近的 Peaks (Merge Reps)
+                # C. 計算加速度 (Acceleration)
+                acceleration = np.gradient(velocity_smooth, time_array)
+
+                # D. 尋找 Reps (Phase Detection Logic)
                 reps = []
-                merge_window = 1.5  # 秒
+                in_rep = False
+                start_index = 0
                 
-                for peak in candidate_peaks:
-                    if not reps:
-                        reps.append(peak)
-                    else:
-                        last_rep = reps[-1]
-                        if (peak['t'] - last_rep['t']) < merge_window:
-                            # 如果時間太近，保留速度較大的那個
-                            if peak['v'] > last_rep['v']:
-                                reps[-1] = peak
-                        else:
-                            reps.append(peak)
+                # 參數設定
+                # min_velo_threshold (from slider, default 0.2 but user wanted 0.05 logic)
+                # User specified 0.05 for start trigger, but keeping slider for flexibility or overriding?
+                # Let's use 0.05 as the hard "start" trigger as requested, but maybe check slider for peak validity?
+                # User request: "Start Trigger: velocity > 0.05 m/s"
+                trigger_velo = 0.05
+                min_duration_frames = int(0.05 * fps) # 50ms
+                
+                i = 0
+                while i < len(velocity_smooth):
+                    v = velocity_smooth[i]
+                    
+                    if not in_rep:
+                        # Start Trigger Check
+                        if v > trigger_velo:
+                            # 檢查持續時間
+                            is_valid_start = True
+                            if i + min_duration_frames < len(velocity_smooth):
+                                for k in range(1, min_duration_frames):
+                                    if velocity_smooth[i+k] <= trigger_velo:
+                                        is_valid_start = False
+                                        break
                             
-                peak_vs = [r['v'] for r in reps]
+                            if is_valid_start:
+                                in_rep = True
+                                start_index = i
+                    else:
+                        # End Trigger Check: v < 0 (ECC phase starts)
+                        if v < 0:
+                            end_index = i
+                            in_rep = False
+                            
+                            # Validate Rep
+                            # 1. ROM Check
+                            rom = height_smooth[end_index] - height_smooth[start_index]
+                            
+                            if rom >= min_rom_threshold: 
+                                # Valid Rep found!
+                                # Calculate Metrics
+                                rep_slice_v = velocity_smooth[start_index:end_index]
+                                rep_slice_a = acceleration[start_index:end_index]
+                                
+                                # MV (Mean Velocity)
+                                mv = np.mean(rep_slice_v)
+                                
+                                # MPV (Mean Propulsive Velocity) - a >= -9.81
+                                # Note: Ideally gravity is 9.81m/s^2 downwards. 
+                                # If using Earth frame where up is positive, g = -9.81.
+                                # Propulsive phase is a >= -9.81 (technically > -g, so > -9.81).
+                                propulsive_indices = rep_slice_a >= -9.81
+                                if np.any(propulsive_indices):
+                                    mpv = np.mean(rep_slice_v[propulsive_indices])
+                                else:
+                                    mpv = mv # Fallback
+                                
+                                peak_v = np.max(rep_slice_v)
+                                peak_idx = start_index + np.argmax(rep_slice_v)
+                                
+                                reps.append({
+                                    'start_idx': start_index,
+                                    'end_idx': end_index,
+                                    'mv': mv,
+                                    'mpv': mpv,
+                                    'peak_v': peak_v,
+                                    'peak_t': time_array[peak_idx], # Time of peak
+                                    'rom': rom
+                                })
+                            
+                    i += 1
+                
                 num_reps = len(reps)
+                mv_list = [r['mv'] for r in reps]
+                mpv_list = [r['mpv'] for r in reps]
                 
-                # E. 計算進階統計 (Biggest Drop, etc.)
-                avg_v = np.mean(peak_vs) if peak_vs else 0
-                min_v = np.min(peak_vs) if peak_vs else 0
-                max_v = np.max(peak_vs) if peak_vs else 0
-                
+                # E. 計算進階統計 (Mean MV Drop)
+                avg_mv = np.mean(mv_list) if mv_list else 0
+                max_mv = np.max(mv_list) if mv_list else 0
+                min_mv = np.min(mv_list) if mv_list else 0
+
                 biggest_drop_pct = 0
-                drop_reps_indices = (-1, -1) # (index of rep A, index of rep B)
+                drop_reps_indices = (-1, -1)
                 
-                # Logic synchronized with Desktop App: Find Biggest Absolute Drop first
                 if num_reps > 1:
                     max_drop_val = 0
-                    v_start_for_pct = 0
-                    
+                    start_val_for_pct = 0
                     for i in range(num_reps - 1):
-                        drop = peak_vs[i] - peak_vs[i+1]
+                        drop = mv_list[i] - mv_list[i+1] # Compare MV
                         if drop > max_drop_val:
                             max_drop_val = drop
-                            v_start_for_pct = peak_vs[i]
-                            drop_reps_indices = (i, i+1) # 0-based index
+                            start_val_for_pct = mv_list[i]
+                            drop_reps_indices = (i, i+1)
                             
-                    # Calculate Percentage for the biggest absolute drop
-                    if max_drop_val > 0 and v_start_for_pct > 0:
-                        biggest_drop_pct = (max_drop_val / v_start_for_pct) * 100
+                    if max_drop_val > 0 and start_val_for_pct > 0:
+                        biggest_drop_pct = (max_drop_val / start_val_for_pct) * 100
                 
                 # --- 6. 結果展示 ---
                 st.success(f"分析完成！偵測到 {num_reps} 組動作 (Reps)")
                 
                 # 統計數據卡片
                 c1, c2, c3 = st.columns(3)
-                c1.metric("平均峰值速度", f"{avg_v:.2f} m/s", delta=f"Max: {max_v:.2f}")
-                c2.metric("最慢一下 (Slowest)", f"{min_v:.2f} m/s")
+                c1.metric("平均 MV (Mean V)", f"{avg_mv:.2f} m/s", delta=f"Best: {max_mv:.2f}")
+                c2.metric("最慢 MV", f"{min_mv:.2f} m/s")
                 
-                drop_str = f"{biggest_drop_pct:.1f}%"
-                drop_label = "最大降幅 (Drop)"
+                drop_label = "MV 最大降幅"
                 if drop_reps_indices[0] != -1:
                     drop_label += f" (R{drop_reps_indices[0]+1} -> R{drop_reps_indices[1]+1})"
-                c3.metric(drop_label, drop_str, delta_color="inverse" if biggest_drop_pct > 10 else "normal")
+                c3.metric(drop_label, f"{biggest_drop_pct:.1f}%", delta_color="inverse" if biggest_drop_pct > 10 else "normal")
 
                 # --- 繪圖 (Matplotlib) ---
                 fig, ax = plt.subplots(figsize=(10, 5))
                 # 繪製速度曲線
-                ax.plot(time_array, velocity_smooth, color='#1f77b4', linewidth=2, label='Velocity', alpha=0.8)
+                ax.plot(time_array, velocity_smooth, color='#1f77b4', linewidth=1.5, label='Velocity', alpha=0.6)
                 ax.axhline(0, color='black', alpha=0.3, linewidth=1)
                 
-                # 標記 Reps
+                # 標記 Reps (Shaded Areas & Points)
                 for i, r in enumerate(reps):
                     rep_num = i + 1
-                    # 預設顏色
-                    color = 'red'
-                    size = 50
                     
-                    # 如果是最大降幅涉及的那兩下，改為紫色
-                    if drop_reps_indices[0] != -1:
-                        if i == drop_reps_indices[0] or i == drop_reps_indices[1]:
-                            color = 'purple'
-                            size = 80
+                    # Highlight Rep Duration
+                    ax.axvspan(time_array[r['start_idx']], time_array[r['end_idx']], color='green', alpha=0.1)
                     
-                    ax.scatter(r['t'], r['v'], color=color, s=size, zorder=5)
-                    ax.annotate(f"{r['v']:.2f}\n(R{rep_num})", 
-                                (r['t'], r['v']), 
-                                xytext=(0, 15), 
+                    # Mark Peak V Point
+                    # color = 'red'
+                    # if drop_reps_indices[0] != -1 and (i == drop_reps_indices[0] or i == drop_reps_indices[1]):
+                    #    color = 'purple'
+                    
+                    # Annotate MV / MPV
+                    mid_time = (time_array[r['start_idx']] + time_array[r['end_idx']]) / 2
+                    ax.annotate(f"R{rep_num}\nMV:{r['mv']:.2f}\nMPV:{r['mpv']:.2f}", 
+                                (r['peak_t'], r['peak_v']), 
+                                xytext=(0, 20), 
                                 textcoords='offset points', 
                                 ha='center', 
-                                fontsize=9, 
+                                fontsize=8, 
                                 fontweight='bold',
-                                color='#333')
-                
-                ax.set_title(f"Velocity Profile ({num_reps} Reps)", fontsize=12)
-                ax.set_ylabel("Speed (m/s)")
+                                color='#333',
+                                bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="b", alpha=0.8))
+                    
+                    ax.scatter(r['peak_t'], r['peak_v'], color='red', s=30, zorder=5)
+
+                ax.set_title(f"Velocity Profile ({num_reps} Reps) - MV & MPV Analysis", fontsize=12)
+                ax.set_ylabel("Velocity (m/s)")
                 ax.set_xlabel("Time (s)")
                 ax.grid(True, alpha=0.3, linestyle='--')
                 
                 st.pyplot(fig)
                 
                 # --- 下載數據 ---
+                # Build detailed rep table
+                rep_data = []
+                for i, r in enumerate(reps):
+                    rep_data.append({
+                        "Rep": i+1,
+                        "Mean Velocity (m/s)": round(r['mv'], 3),
+                        "Mean Propulsive V (m/s)": round(r['mpv'], 3),
+                        "Peak Velocity (m/s)": round(r['peak_v'], 3),
+                        "ROM (m)": round(r['rom'], 3),
+                        "Duration (s)": round(time_array[r['end_idx']] - time_array[r['start_idx']], 3)
+                    })
+                
+                st.write("### 詳細數據 (Detailed Data)")
+                st.dataframe(pd.DataFrame(rep_data))
+                
                 df = pd.DataFrame({
                     "Time": time_array, 
                     "Velocity": velocity_smooth, 
+                    "Acceleration": acceleration,
                     "Height": height_smooth
                 })
                 csv = df.to_csv(index=False).encode('utf-8')
-                st.download_button("📥 下載詳細 CSV 數據", csv, "barbell_analysis.csv", "text/csv")
+                st.download_button("📥 下載 Raw CSV 數據", csv, "barbell_analysis_raw.csv", "text/csv")
                 
             else:
                 st.error("❌ 追蹤失敗或數據太短。請嘗試：\n1. 調整綠色追蹤框的位置\n2. 確保影片光線充足且背景單純")
