@@ -35,7 +35,7 @@ class KalmanFilter1D:
         self.P = estimated_error
         self.X = initial_value
 
-    def update(self, measurement, dt=None):
+    def update(self, measurement):
         # Prediction
         # User's local code scales Q by time, but here we keep it simple for 1D unless we want full state
         # The user's code uses Q ~ dt^4 for pos, here we just trust the Q parameter for now
