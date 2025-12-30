@@ -162,15 +162,21 @@ class ThreadedVideoReader:
 st.header("1. 上傳影片")
 uploaded_file = st.file_uploader("選擇影片文件 (MP4/MOV)", type=['mp4', 'mov', 'avi'])
 
+# Initialize session state defaults
+if "last_uploaded" not in st.session_state:
+    st.session_state.last_uploaded = None
+
 if uploaded_file is not None:
     # Check if a new file is uploaded
-    if "last_uploaded" not in st.session_state or st.session_state.last_uploaded != uploaded_file.name:
+    if st.session_state.last_uploaded != uploaded_file.name:
         st.session_state.last_uploaded = uploaded_file.name
         # Clear specific session state keys to force reset
         keys_to_reset = ["initial_drawing", "stroke_color"]
         for k in keys_to_reset:
             if k in st.session_state:
                 del st.session_state[k]
+        # Force a rerun to ensure clean state
+        st.rerun()
 
     # 保存臨時文件
     # Use delete=False to keep file for OpenCV processing
