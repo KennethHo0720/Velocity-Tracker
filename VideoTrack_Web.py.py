@@ -175,8 +175,7 @@ if uploaded_file is not None:
         for k in keys_to_reset:
             if k in st.session_state:
                 del st.session_state[k]
-        # Force a rerun to ensure clean state
-        st.rerun()
+        # State is cleared; the dynamic canvas key will handle the rest
 
     # 保存臨時文件
     # Use delete=False to keep file for OpenCV processing
