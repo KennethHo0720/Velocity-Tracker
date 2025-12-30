@@ -163,9 +163,20 @@ st.header("1. 上傳影片")
 uploaded_file = st.file_uploader("選擇影片文件 (MP4/MOV)", type=['mp4', 'mov', 'avi'])
 
 if uploaded_file is not None:
+    # Check if a new file is uploaded
+    if "last_uploaded" not in st.session_state or st.session_state.last_uploaded != uploaded_file.name:
+        st.session_state.last_uploaded = uploaded_file.name
+        # Clear specific session state keys to force reset
+        keys_to_reset = ["initial_drawing", "stroke_color"]
+        for k in keys_to_reset:
+            if k in st.session_state:
+                del st.session_state[k]
+
     # 保存臨時文件
-    tfile = tempfile.NamedTemporaryFile(delete=False)
+    # Use delete=False to keep file for OpenCV processing
+    tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') 
     tfile.write(uploaded_file.read())
+    tfile.close() # Close the file so OpenCV can open it safely on Windows
     video_path = tfile.name
     
     cap = cv2.VideoCapture(video_path)
