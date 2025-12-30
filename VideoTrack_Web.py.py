@@ -478,49 +478,51 @@ if uploaded_file is not None:
             end_frame_idx = int(end_t * fps)
             total_frames = end_frame_idx - start_frame
             
-            # --- 分析迴圈 ---
-            # --- 分析迴圈 (Optimized with Threading) ---
-            # Start the threaded video reader
-            video_reader = ThreadedVideoReader(video_path, start_frame, end_frame_idx, process_scale, rotation_code)
-            video_reader.start()
+            # --- 分析迴圈 (Non-threaded for Cloud Compatibility) ---
+            # Re-open video for analysis
+            cap_analysis = cv2.VideoCapture(video_path)
+            cap_analysis.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
             
-            while video_reader.more():
-                item = video_reader.read()
-                if item is None:
-                    break
+            try:
+                for idx in range(start_frame, end_frame_idx):
+                    ret, frame = cap_analysis.read()
+                    if not ret:
+                        break
                     
-                (ret, frame_small, idx) = item
-                if not ret:
-                    break
-                
-                # Performance Optimization: Frame Skipping
-                current_process_idx = idx - start_frame
-                
-                # Default assume success for skipped frames (we will interpolate later)
-                # But for tracking, we only update tracker on specific frames
-                
-                if current_process_idx == 0 or current_process_idx % (frame_skip + 1) == 0:
-                    # --- 增強追蹤: 灰階 + CLAHE ---
-                    frame_gray = cv2.cvtColor(frame_small, cv2.COLOR_BGR2GRAY)
-                    frame_enhanced = clahe.apply(frame_gray)
+                    # Apply rotation if needed
+                    if rotation_code is not None:
+                        frame = cv2.rotate(frame, rotation_code)
                     
-                    success, box = tracker.update(frame_enhanced)
+                    # Resize for processing
+                    frame_small = cv2.resize(frame, (0,0), fx=process_scale, fy=process_scale)
                     
-                    if success:
-                        (x, y, bw, bh) = [int(v) for v in box]
-                        cy_small = y + bh/2
-                        cy_original = cy_small / process_scale
+                    # Performance Optimization: Frame Skipping
+                    current_process_idx = idx - start_frame
+                    
+                    if current_process_idx == 0 or current_process_idx % (frame_skip + 1) == 0:
+                        # --- 增強追蹤: 灰階 + CLAHE ---
+                        frame_gray = cv2.cvtColor(frame_small, cv2.COLOR_BGR2GRAY)
+                        frame_enhanced = clahe.apply(frame_gray)
                         
-                        positions.append(cy_original)
-                        times.append(idx / fps)
+                        success, box = tracker.update(frame_enhanced)
+                        
+                        if success:
+                            (x, y, bw, bh) = [int(v) for v in box]
+                            cy_small = y + bh/2
+                            cy_original = cy_small / process_scale
+                            
+                            positions.append(cy_original)
+                            times.append(idx / fps)
+                    
+                    # 更新進度條 (每 5 幀更新一次)
+                    if total_frames > 0 and current_process_idx % 5 == 0:
+                        prog = current_process_idx / total_frames
+                        progress_bar.progress(min(prog, 1.0))
                 
-                # 更新進度條 (每 10 幀更新一次以節省資源)
-                if total_frames > 0 and idx % 10 == 0:
-                    prog = (idx - start_frame) / total_frames
-                    progress_bar.progress(min(prog, 1.0))
+            finally:
+                cap_analysis.release()
             
             progress_bar.progress(1.0)
-            video_reader.stop()
             
             # --- 5. 數據後處理 (Data Post-Processing - SYNCED WITH DESKTOP) ---
             if len(positions) > 10:
