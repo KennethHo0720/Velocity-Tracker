@@ -7,6 +7,8 @@ import pandas as pd
 import threading
 import queue
 import time
+import io
+import base64
 
 # --- 頁面配置 ---
 st.set_page_config(page_title="Barbell Tracker Pro V2", layout="wide") 
@@ -314,6 +316,13 @@ if uploaded_file is not None:
         from streamlit_drawable_canvas import st_canvas
         from PIL import Image
 
+        # Helper function to convert PIL image to base64 data URI
+        def pil_to_base64(img):
+            buffered = io.BytesIO()
+            img.save(buffered, format="PNG")
+            img_str = base64.b64encode(buffered.getvalue()).decode()
+            return f"data:image/png;base64,{img_str}"
+
         # 縮放圖片以適應畫布
         h_orig, w_orig = first_frame.shape[:2]
         
@@ -366,9 +375,11 @@ if uploaded_file is not None:
             }
 
         # Canvas
-        # Use a dynamic key based on filename to force full component remount when video changes
-        # This prevents the "Missing file" error caused by the canvas trying to load the old background image
-        canvas_key = f"canvas_{st.session_state.last_uploaded}"
+        # Use a dynamic key based on filename AND frame content hash to force full component remount
+        # This prevents the "Missing file" error caused by the canvas trying to load stale images
+        import hashlib
+        frame_hash = hashlib.md5(frame_rgb.tobytes()[:1000]).hexdigest()[:8]  # Use first 1000 bytes for speed
+        canvas_key = f"canvas_{st.session_state.last_uploaded}_{start_t}_{frame_hash}"
         
         c_result = st_canvas(
             fill_color="rgba(255, 165, 0, 0.1)",
