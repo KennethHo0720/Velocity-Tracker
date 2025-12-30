@@ -361,6 +361,10 @@ if uploaded_file is not None:
             }
 
         # Canvas
+        # Use a dynamic key based on filename to force full component remount when video changes
+        # This prevents the "Missing file" error caused by the canvas trying to load the old background image
+        canvas_key = f"canvas_{st.session_state.last_uploaded}"
+        
         c_result = st_canvas(
             fill_color="rgba(255, 165, 0, 0.1)",
             stroke_width=3,
@@ -370,7 +374,7 @@ if uploaded_file is not None:
             width=display_w,
             drawing_mode="transform", # Only allow moving/resizing
             initial_drawing=st.session_state.initial_drawing,
-            key="main_canvas_transform",
+            key=canvas_key,
             display_toolbar=False, # Hide toolbar
         )
         
