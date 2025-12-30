@@ -27,34 +27,69 @@ st.title("🏋️ 杠鈴速度分析 V2 (Web)")
 st.caption("移植自 Desktop Pro 版 | 支援 Reps 偵測與降幅分析")
 st.markdown("---")
 
-# --- 輔助函數: 平滑處理 ---
-class KalmanFilter1D:
-    def __init__(self, process_noise, measurement_noise, estimated_error, initial_value):
-        self.Q = process_noise
-        self.R = measurement_noise
-        self.P = estimated_error
-        self.X = initial_value
+# ---------------------------------------------------------
+#  KALMAN FILTER (NEW ADDITION - Ported from Desktop)
+# ---------------------------------------------------------
+class SimpleKalmanFilter:
+    def __init__(self, initial_value, initial_velocity=0.0, process_noise=0.005, measurement_noise=5.0):
+        # 狀態向量 [位置, 速度]
+        self.x = np.array([[initial_value], [initial_velocity]])
+        
+        # 狀態共變異數矩陣 P (初始不確定性)
+        self.P = np.eye(2) * 1.0
+        
+        # 狀態轉移矩陣 F (假設恆定速度模型: pos = pos + vel*dt)
+        # dt 會在 update 時動態應用，這裡先設基礎結構
+        self.F = np.eye(2)
+        
+        # 測量矩陣 H (我們只測量位置)
+        self.H = np.array([[1.0, 0.0]])
+        
+        # 測量雜訊 R (感測器/追蹤誤差)
+        self.R = np.array([[measurement_noise]])
+        
+        # 過程雜訊 Q (系統內部變化，如運動員突然發力)
+        self.Q_base = process_noise
 
-    def update(self, measurement):
-        # Prediction
-        # User's local code scales Q by time, but here we keep it simple for 1D unless we want full state
-        # The user's code uses Q ~ dt^4 for pos, here we just trust the Q parameter for now
-        self.P = self.P + self.Q
+    def process(self, measurement, dt):
+        if dt <= 0: return self.x[0, 0], self.x[1, 0]
 
-        # Update
-        K = self.P / (self.P + self.R)
-        self.X = self.X + K * (measurement - self.X)
-        self.P = (1 - K) * self.P
-        return self.X
+        # 1. 更新狀態轉移矩陣 F 和過程雜訊 Q
+        self.F[0, 1] = dt
+        
+        # Q 矩陣構建 (Discrete White Noise Acceleration Model)
+        # 允許速度隨時間變化 (加速度)
+        q_pos = (dt**4)/4
+        q_pos_vel = (dt**3)/2
+        q_vel = (dt**2)
+        
+        Q = np.array([
+            [q_pos, q_pos_vel],
+            [q_pos_vel, q_vel]
+        ]) * self.Q_base
 
-def apply_kalman_filter(data, R=0.1, Q=100.0): # Default Q increased significantly
-    if len(data) == 0: return data
-    # Initialize with first value
-    kf = KalmanFilter1D(process_noise=Q, measurement_noise=R, estimated_error=1.0, initial_value=data[0])
-    filtered_data = []
-    for measurement in data:
-        filtered_data.append(kf.update(measurement))
-    return np.array(filtered_data)
+        # 2. 預測 (Predict)
+        self.x = np.dot(self.F, self.x)
+        self.P = np.dot(np.dot(self.F, self.P), self.F.T) + Q
+
+        # 3. 更新 (Update)
+        z = np.array([[measurement]])
+        y = z - np.dot(self.H, self.x) # Residual
+        S = np.dot(np.dot(self.H, self.P), self.H.T) + self.R
+        K = np.dot(np.dot(self.P, self.H.T), np.linalg.inv(S)) # Kalman Gain
+        
+        self.x = self.x + np.dot(K, y)
+        I = np.eye(2)
+        self.P = np.dot((I - np.dot(K, self.H)), self.P)
+
+        # 返回平滑後的位置和速度
+        return self.x[0, 0], self.x[1, 0]
+
+def apply_kalman_filter(data, R=0.1, Q=100.0):
+    # Backward compatibility wrapper if needed, or just placeholder
+    # In the new logic we won't use this, but keeping it just in case of reference error until fully replaced.
+    # Actually, we will remove usages.
+    pass
 
 class ThreadedVideoReader:
     def __init__(self, path, start_frame, end_frame, scale_factor, rotation_code=None):
@@ -456,144 +491,178 @@ if uploaded_file is not None:
             progress_bar.progress(1.0)
             video_reader.stop()
             
-            # --- 5. 數據後處理 (Data Post-Processing) ---
-            if len(positions) > 5:
-                # Interpolation for Performance Mode
-                if frame_skip > 0 and len(positions) > 1:
-                    full_times = np.linspace(times[0], times[-1], int((times[-1]-times[0])*fps))
-                    full_positions = np.interp(full_times, times, positions)
+            # --- 5. 數據後處理 (Data Post-Processing - SYNCED WITH DESKTOP) ---
+            if len(positions) > 10:
+                # === REPLACED: Updated with Physics-Based Kalman Filter ===
+                
+                # 1. 數據預處理 (像素 -> 公尺)
+                # 原始 positions (cy_original) 是向下增加，所以我們取負號讓「向上」為正
+                raw_y_meters = [(-y * meters_per_pixel) for y in positions]
+                
+                # 2. 初始化卡爾曼濾波器
+                # 參數直接對齊 Desktop 版: Process Noise=150.0, Meas Noise=0.1
+                kf = SimpleKalmanFilter(
+                    initial_value=raw_y_meters[0], 
+                    process_noise=150.0, 
+                    measurement_noise=0.1 
+                )
+                
+                kalman_pos = []
+                kalman_vel = []
+                t_clean = []
+                
+                for i in range(len(raw_y_meters)):
+                    current_time = times[i]
+                    meas = raw_y_meters[i]
                     
-                    time_array = full_times
-                    pos_array = full_positions
-                else:
-                    pos_array = np.array(positions)
-                    time_array = np.array(times)
-                
-                # A. 像素轉位移 (Y軸向下為正，需反轉)
-                # 假設起始位置為 0，向上移動為正
-                height_pixels = -(pos_array - pos_array[0])
-                height_m = height_pixels * meters_per_pixel
-                height_smooth = apply_kalman_filter(height_m, R=0.01, Q=150.0) # 位置平滑 (高 Process Noise 適應快速爆發)
-                
-                # B. 計算速度 (Gradient)
-                velocity = np.gradient(height_smooth, time_array)
-                velocity_smooth = apply_kalman_filter(velocity, R=kalman_r, Q=50.0) # 速度平滑
-                
-                # C. 計算加速度 (Acceleration)
-                acceleration = np.gradient(velocity_smooth, time_array)
+                    if i == 0:
+                        dt = 0
+                    else:
+                        dt = current_time - times[i-1]
+                    
+                    # 過濾掉異常的時間差 (例如掉幀)
+                    if dt > 1.0: dt = 1.0/fps
+                    
+                    k_pos, k_vel = kf.process(meas, dt)
+                    
+                    kalman_pos.append(k_pos)
+                    kalman_vel.append(k_vel)
+                    t_clean.append(current_time)
 
-                # D. 尋找 Reps (Phase Detection Logic)
+                # 轉換為 numpy array 以便後續處理
+                # 位置我們用相對位移 (從 0 開始)
+                y_smooth = np.array(kalman_pos)
+                y_smooth = y_smooth - y_smooth[0] 
+                
+                # 卡爾曼直接給出速度，無需再微分
+                velocity_smooth = np.array(kalman_vel)
+                time_array = np.array(t_clean)
+                
+                # 3. REP DETECTION LOGIC (State Machine & VBT Metrics)
+                
+                # 先計算加速度 (Acceleration) 用於 MPV
+                # a = dv/dt
+                acceleration = np.gradient(velocity_smooth, time_array)
+                
                 reps = []
-                in_rep = False
-                start_index = 0
                 
-                # 參數設定
-                # min_velo_threshold (from slider, default 0.2 but user wanted 0.05 logic)
-                # User specified 0.05 for start trigger, but keeping slider for flexibility or overriding?
-                # Let's use 0.05 as the hard "start" trigger as requested, but maybe check slider for peak validity?
-                # User request: "Start Trigger: velocity > 0.05 m/s"
-                trigger_velo = 0.05
-                min_duration_frames = int(0.05 * fps) # 50ms
+                # --- 參數設定 (Config) ---
+                MIN_VEL_THRESH = 0.05       
+                MIN_DUR_SEC = 0.05          
+                MIN_DUR_FRAMES = int(MIN_DUR_SEC * fps) 
                 
-                i = 0
-                while i < len(velocity_smooth):
+                # [FIX 1] 將 0.15 改為 0.05 (5公分)
+                MIN_ROM_METERS = 0.05       
+                
+                GRAVITY = 9.81              
+
+                in_concentric = False
+                start_idx = 0
+                
+                for i in range(len(velocity_smooth) - MIN_DUR_FRAMES):
                     v = velocity_smooth[i]
                     
-                    if not in_rep:
-                        # Start Trigger Check
-                        if v > trigger_velo:
-                            # 檢查持續時間
-                            is_valid_start = True
-                            if i + min_duration_frames < len(velocity_smooth):
-                                for k in range(1, min_duration_frames):
-                                    if velocity_smooth[i+k] <= trigger_velo:
-                                        is_valid_start = False
-                                        break
+                    if not in_concentric:
+                        # --- START TRIGGER ---
+                        if v > MIN_VEL_THRESH:
+                            # 預讀接下來幾幀
+                            future_window = velocity_smooth[i : i + MIN_DUR_FRAMES]
                             
-                            if is_valid_start:
-                                in_rep = True
-                                start_index = i
+                            # [FIX 2] 將 np.min 改為 np.mean (容許微小抖動)
+                            if np.mean(future_window) > MIN_VEL_THRESH:
+                                in_concentric = True
+                                start_idx = i
+                                
                     else:
-                        # End Trigger Check: v < 0 (ECC phase starts)
-                        if v < 0:
-                            end_index = i
-                            in_rep = False
+                        # --- END TRIGGER ---
+                        # 條件：速度 < 0 (開始下放) 或 數據結束
+                        if v < 0 or i == len(velocity_smooth) - MIN_DUR_FRAMES - 1:
+                            in_concentric = False
+                            end_idx = i
                             
-                            # Validate Rep
-                            # 1. ROM Check
-                            rom = height_smooth[end_index] - height_smooth[start_index]
+                            # --- 數據切片 (Slicing) ---
+                            vel_slice = velocity_smooth[start_idx : end_idx]
+                            acc_slice = acceleration[start_idx : end_idx]
+                            pos_slice = y_smooth[start_idx : end_idx]
+                            t_slice = time_array[start_idx : end_idx]
                             
-                            if rom >= min_rom_threshold: 
-                                # Valid Rep found!
-                                # Calculate Metrics
-                                rep_slice_v = velocity_smooth[start_index:end_index]
-                                rep_slice_a = acceleration[start_index:end_index]
-                                
-                                # MV (Mean Velocity)
-                                mv = np.mean(rep_slice_v)
-                                
-                                # MPV (Mean Propulsive Velocity) - a >= -9.81
-                                # Note: Ideally gravity is 9.81m/s^2 downwards. 
-                                # If using Earth frame where up is positive, g = -9.81.
-                                # Propulsive phase is a >= -9.81 (technically > -g, so > -9.81).
-                                propulsive_indices = rep_slice_a >= -9.81
-                                if np.any(propulsive_indices):
-                                    mpv = np.mean(rep_slice_v[propulsive_indices])
-                                else:
-                                    mpv = mv # Fallback
-                                
-                                peak_v = np.max(rep_slice_v)
-                                peak_idx = start_index + np.argmax(rep_slice_v)
-                                
-                                reps.append({
-                                    'start_idx': start_index,
-                                    'end_idx': end_index,
-                                    'mv': mv,
-                                    'mpv': mpv,
-                                    'peak_v': peak_v,
-                                    'peak_t': time_array[peak_idx], # Time of peak
-                                    'rom': rom
-                                })
+                            # --- VALIDATION (過濾無效次數) ---
                             
-                    i += 1
-                
+                            # 1. ROM 檢查 (位移量)
+                            rep_rom = pos_slice[-1] - pos_slice[0]
+                            if rep_rom < MIN_ROM_METERS:
+                                continue # 跳過這次誤判
+                                
+                            # --- METRICS CALCULATION (計算 MV & MPV) ---
+                            
+                            # A. Mean Velocity (MV) - 整個向心階段
+                            mv = np.mean(vel_slice)
+                            
+                            # B. Mean Propulsive Velocity (MPV)
+                            # 條件：加速度 >= -9.81 m/s^2 (代表運動員正在施力對抗重力)
+                            propulsive_mask = acc_slice >= -GRAVITY
+                            if np.any(propulsive_mask):
+                                mpv = np.mean(vel_slice[propulsive_mask])
+                            else:
+                                mpv = mv # 異常保護
+                            
+                            peak_v = np.max(vel_slice)
+                            peak_local_idx = np.argmax(vel_slice)
+                            peak_time = t_slice[peak_local_idx]
+                            
+                            reps.append({
+                                'start_idx': start_idx,
+                                'end_idx': end_idx,
+                                'mv': mv,
+                                'mpv': mpv,
+                                'peak_v': peak_v,
+                                'peak_t': peak_time,
+                                'rom': rep_rom
+                            })
+
                 num_reps = len(reps)
+                
+                # --- RESULTS AGGREGATION ---
                 mv_list = [r['mv'] for r in reps]
                 mpv_list = [r['mpv'] for r in reps]
                 
-                # E. 計算進階統計 (Mean MV Drop)
-                avg_mv = np.mean(mv_list) if mv_list else 0
-                max_mv = np.max(mv_list) if mv_list else 0
-                min_mv = np.min(mv_list) if mv_list else 0
-
-                biggest_drop_pct = 0
-                drop_reps_indices = (-1, -1)
+                # 計算各自的「整組平均值」 (Set Average)
+                avg_mv = float(np.mean(mv_list)) if mv_list else 0.0
+                avg_mpv = float(np.mean(mpv_list)) if mpv_list else 0.0 # Renamed to match downstream
                 
-                if num_reps > 1:
-                    max_drop_val = 0
-                    start_val_for_pct = 0
-                    for i in range(num_reps - 1):
-                        drop = mv_list[i] - mv_list[i+1] # Compare MV
-                        if drop > max_drop_val:
-                            max_drop_val = drop
-                            start_val_for_pct = mv_list[i]
-                            drop_reps_indices = (i, i+1)
-                            
-                    if max_drop_val > 0 and start_val_for_pct > 0:
-                        biggest_drop_pct = (max_drop_val / start_val_for_pct) * 100
+                # 計算最佳值與疲勞 (以 MPV 為基準)
+                best_mpv = max(mpv_list) if mpv_list else 0.0
+                worst_mpv = min(mpv_list) if mpv_list else 0.0
+                
+                loss_pct = 0.0
+                slowest_rep_num = 0
+                
+                if mpv_list:
+                    # 找出最慢的一下 (基於 MPV)
+                    slowest_idx = mpv_list.index(worst_mpv)
+                    # 計算疲勞流失率
+                    loss_pct = ((best_mpv - worst_mpv) / best_mpv) * 100
+                
+                # For compatibility with plotting code below
+                height_smooth = y_smooth 
+                
+                # Drop calculations - keeping original UI variable name 'biggest_drop_pct' for display logic below
+                biggest_drop_pct = loss_pct
+                drop_reps_indices = (-1, -1) # Disable the old pair-wise drop logic for now or mapped to fatigue
                 
                 # --- 6. 結果展示 ---
                 st.success(f"分析完成！偵測到 {num_reps} 組動作 (Reps)")
                 
-                # 統計數據卡片
+                # 統計數據卡片 (Result Metrics - Desktop Style)
                 c1, c2, c3 = st.columns(3)
-                c1.metric("平均 MV (Mean V)", f"{avg_mv:.2f} m/s", delta=f"Best: {max_mv:.2f}")
-                c2.metric("最慢 MV", f"{min_mv:.2f} m/s")
+                c1.metric("Best MPV", f"{best_mpv:.2f} m/s", delta=f"Avg: {avg_mpv:.2f}")
+                c2.metric("Set Avg MV", f"{avg_mv:.2f} m/s")
                 
-                drop_label = "MV 最大降幅"
-                if drop_reps_indices[0] != -1:
-                    drop_label += f" (R{drop_reps_indices[0]+1} -> R{drop_reps_indices[1]+1})"
-                c3.metric(drop_label, f"{biggest_drop_pct:.1f}%", delta_color="inverse" if biggest_drop_pct > 10 else "normal")
+                loss_label = "Fatigue (Loss%)"
+                if fastest_rep_idx := locals().get('slowest_rep', None): # Not defined here actually
+                    pass 
+                
+                c3.metric(loss_label, f"{loss_pct:.1f}%", delta_color="inverse" if loss_pct > 10 else "normal")
 
                 # --- 繪圖 (Matplotlib) ---
                 # --- 繪圖 (Matplotlib) - PRO Style ---
